@@ -18,24 +18,25 @@
 ## 快速开始
 
 ```bash
-# 安装
-uv pip install minicc
-
 # 设置 API Key
 export ANTHROPIC_API_KEY="your-key"
 # 或 export OPENAI_API_KEY="your-key"
 
-# 运行
+# 直接运行（无需安装）
+uvx minicc
+
+# 或者安装后运行
+uv pip install minicc
 minicc
 ```
 
 ## 开发
 
 ```bash
-git clone https://github.com/user/minicc.git
-cd minicc
+git clone https://github.com/TokenRollAI/miniCC.git
+cd miniCC
 uv sync
-uv run python -m minicc
+uv run minicc
 ```
 
 ## 项目结构
@@ -61,17 +62,37 @@ minicc/
 }
 ```
 
+### Prompt Cache (Anthropic)
+
+按照 [pydantic-ai Anthropic 指南](https://ai.pydantic.dev/models/anthropic/#how-cache-points-are-allocated) 可以在配置里开启 prompt caching：
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-20250514",
+  "prompt_cache": {
+    "instructions": true,
+    "tool_definitions": "1h",
+    "messages": true
+  }
+}
+```
+
+- `instructions` 缓存系统提示词；`tool_definitions` 缓存工具定义；`messages` 缓存最近一条用户消息  
+- `true` 表示 5 分钟 TTL，或显式写 `"5m"` / `"1h"`  
+- Anthropic 最多支持 4 个 cache points，pydantic-ai 会按指南自动裁剪超出的 CachePoint
+
 ## 工具列表
 
-| 工具 | 作用 |
-|------|------|
-| read_file | 读文件 |
-| write_file | 写文件 |
-| update_file | 改文件 |
+| 工具         | 作用           |
+| ------------ | -------------- |
+| read_file    | 读文件         |
+| write_file   | 写文件         |
+| update_file  | 改文件         |
 | search_files | 按模式搜索文件 |
-| grep | 正则搜索内容 |
-| bash | 执行命令 |
-| spawn_agent | 创建子任务 |
+| grep         | 正则搜索内容   |
+| bash         | 执行命令       |
+| spawn_agent  | 创建子任务     |
 
 ## License
 

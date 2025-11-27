@@ -5,20 +5,21 @@ MiniCC TUI 应用主模块
 """
 
 import os
+import subprocess
 from typing import Any
 
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll, Horizontal, Vertical
-from textual.widgets import Footer, Header, Input, Static, TabbedContent, TabPane
+from textual.containers import VerticalScroll
+from textual.widgets import Footer, Header, Input
 from pydantic_ai import AgentRunResultEvent
 from pydantic_ai.messages import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta
 
 from .agent import create_agent
 from .config import load_config
 from .schemas import Config, MiniCCDeps
-from .ui.widgets import MessagePanel, StatusBar, ToolCallPanel
+from .ui.widgets import MessagePanel, BottomBar, ToolCallLine, SubAgentLine
 
 
 class MiniCCApp(App):
@@ -60,43 +61,45 @@ class MiniCCApp(App):
         )
         self.messages: list[Any] = []
         self._is_processing = False
+        self._git_branch = self._get_git_branch()
+
+    def _get_git_branch(self) -> str | None:
+        """获取当前 git 分支名"""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=self.deps.cwd,
+                timeout=2
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+        return None
 
     def compose(self) -> ComposeResult:
         """定义 UI 布局"""
         yield Header(show_clock=True)
-        yield Horizontal(
-            VerticalScroll(id="chat_container"),
-            Vertical(
-                StatusBar(id="status_bar"),
-                Static(id="info_card"),
-                TabbedContent(id="tabs"),
-                id="side_panel"
-            ),
-            id="body"
-        )
+        yield VerticalScroll(id="chat_container")
         yield Input(id="input", placeholder="输入消息... (Ctrl+C 退出)")
+        yield BottomBar(
+            model=f"{self.config.provider.value}:{self.config.model}",
+            cwd=self.deps.cwd,
+            git_branch=self._git_branch,
+            id="bottom_bar"
+        )
         yield Footer(id="footer")
 
     def on_mount(self) -> None:
         """应用挂载后初始化"""
         self.query_one("#input", Input).focus()
-        # 初始化 Tab 页
-        tabs = self.query_one(TabbedContent)
-        tabs.add_pane(TabPane("工具", VerticalScroll(id="tool_container")))
-        tabs.add_pane(TabPane("SubAgents", VerticalScroll(id="subagent_container")))
-
         self._show_welcome()
-        self._set_status("就绪")
-        self._refresh_info()
-        self._refresh_subagents()
 
     def _show_welcome(self) -> None:
         """显示欢迎信息"""
-        welcome = (
-            "**MiniCC**\n"
-            f"*模型*: `{self.config.provider.value}:{self.config.model}`\n"
-            f"*工作目录*: `{self.deps.cwd}`"
-        )
+        welcome = "**MiniCC** - 极简 AI 编程助手\n\n输入问题开始对话，Ctrl+C 退出"
         self._append_message(welcome, role="system")
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -127,7 +130,6 @@ class MiniCCApp(App):
         使用 @work 装饰器确保不阻塞 UI，exclusive=True 防止并发请求。
         """
         self._is_processing = True
-        self._set_status("处理中...")
 
         try:
             # 使用 run_stream_events 确保工具调用后的循环不会提前结束
@@ -146,16 +148,18 @@ class MiniCCApp(App):
                     final_text = streamed_text or str(event.result.output)
                     self._append_message(final_text, role="assistant")
                     self.messages = event.result.all_messages()
+                    # 更新 token 使用量
+                    usage = event.result.usage()
+                    if usage:
+                        self._update_tokens(usage)
 
         except Exception as e:
             self._append_message(f"❌ 错误: {e}", role="system")
 
         finally:
             self._is_processing = False
-            self._set_status("就绪")
             # 自动滚动到底部
             self._chat_container().scroll_end()
-            self._refresh_subagents()
 
     def _on_tool_call(
         self,
@@ -166,28 +170,36 @@ class MiniCCApp(App):
         """
         工具调用回调
 
-        在工具执行后被调用，用于 UI 更新。
+        在工具执行后被调用，将工具调用显示到会话框。
         """
-        tool_panel = ToolCallPanel(tool_name, args, result)
-        tools = self._tool_container()
-        tools.mount(tool_panel)
-        tools.scroll_end()
-        self._set_status(f"执行工具: {tool_name}")
+        # 检查是否是 spawn_agent 工具
+        if tool_name == "spawn_agent":
+            task_id = result.output if result.success else "unknown"
+            prompt = args.get("prompt", "")
+            line = SubAgentLine(
+                task_id=task_id,
+                prompt=prompt,
+                status="running" if result.success else "failed"
+            )
+        else:
+            line = ToolCallLine(tool_name, args, result)
 
-        # 恢复处理中状态（后续可能还有工具/回复）
-        if self._is_processing:
-            self._set_status("处理中...")
-        self._refresh_subagents()
+        chat = self._chat_container()
+        chat.mount(line)
+        chat.scroll_end(animate=False)
 
     def action_clear(self) -> None:
         """清屏动作"""
         chat = self._chat_container()
         for child in list(chat.children):
             child.remove()
-        tools = self._tool_container()
-        for child in list(tools.children):
-            child.remove()
         self.messages = []
+        # 重置 token 计数
+        try:
+            bottom_bar = self.query_one(BottomBar)
+            bottom_bar.update_info(input_tokens=0, output_tokens=0)
+        except Exception:
+            pass
         self._show_welcome()
 
     def action_quit(self) -> None:
@@ -198,58 +210,24 @@ class MiniCCApp(App):
         """取消当前操作"""
         if self._is_processing:
             self._append_message("⚠️ 正在取消...", role="system")
-            # 注意：pydantic-ai 目前不支持取消正在进行的请求
-            # 这里只是标记状态
-            self._set_status("取消请求中")
-
-    def _set_status(self, text: str) -> None:
-        """更新状态栏文本"""
-        try:
-            status = self.query_one(StatusBar)
-            status.update_status(text)
-        except Exception:
-            pass
 
     def _chat_container(self) -> VerticalScroll:
         return self.query_one("#chat_container", VerticalScroll)
-
-    def _tool_container(self) -> VerticalScroll:
-        return self.query_one("#tool_container", VerticalScroll)
-
-    def _subagent_container(self) -> VerticalScroll:
-        return self.query_one("#subagent_container", VerticalScroll)
 
     def _append_message(self, content: str, role: str = "assistant") -> MessagePanel:
         panel = MessagePanel(content, role=role)
         chat = self._chat_container()
         chat.mount(panel)
-        chat.scroll_end()
+        chat.scroll_end(animate=False)
         return panel
 
-    def _refresh_info(self) -> None:
-        """更新侧边信息卡片"""
+    def _update_tokens(self, usage: Any) -> None:
+        """更新 token 使用量到底边栏"""
         try:
-            info = self.query_one("#info_card", Static)
-            info.update(
-                "**会话信息**\n"
-                f"- 模型: `{self.config.provider.value}:{self.config.model}`\n"
-                f"- 工作目录: `{self.deps.cwd}`"
-            )
-        except Exception:
-            pass
-
-    def _refresh_subagents(self) -> None:
-        """刷新子任务状态展示"""
-        try:
-            container = self._subagent_container()
-            for child in list(container.children):
-                child.remove()
-            if not self.deps.sub_agents:
-                container.mount(Static("[dim]暂无 SubAgent[/dim]"))
-                return
-
-            for tid, task in self.deps.sub_agents.items():
-                container.mount(Static(f"[dim]{tid}[/dim] {task.status}"))
+            bottom_bar = self.query_one(BottomBar)
+            input_tokens = getattr(usage, "request_tokens", 0) or getattr(usage, "input_tokens", 0)
+            output_tokens = getattr(usage, "response_tokens", 0) or getattr(usage, "output_tokens", 0)
+            bottom_bar.add_tokens(input_tokens, output_tokens)
         except Exception:
             pass
 

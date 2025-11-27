@@ -4,7 +4,6 @@ MiniCC Agent 定义
 使用 pydantic-ai 创建和配置 Agent，支持 Anthropic 和 OpenAI 后端。
 """
 
-from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_ai import Agent
@@ -54,6 +53,28 @@ def create_model(config: Config) -> AnthropicModel | OpenAIModel | str:
         return f"openai:{config.model}"
 
 
+def _build_model_settings(config: Config) -> dict[str, Any] | None:
+    """
+    将配置转换为模型设置
+
+    目前主要用于 Anthropic Prompt Cache 选项。
+    """
+    if config.provider != Provider.ANTHROPIC:
+        return None
+
+    cache = config.prompt_cache
+    settings: dict[str, Any] = {}
+
+    if cache.instructions:
+        settings["anthropic_cache_instructions"] = cache.instructions
+    if cache.tool_definitions:
+        settings["anthropic_cache_tool_definitions"] = cache.tool_definitions
+    if cache.messages:
+        settings["anthropic_cache_messages"] = cache.messages
+
+    return settings or None
+
+
 def create_agent(config: Config) -> Agent[MiniCCDeps, str]:
     """
     创建并配置主 Agent
@@ -69,10 +90,13 @@ def create_agent(config: Config) -> Agent[MiniCCDeps, str]:
     model = create_model(config)
     system_prompt = load_agents_prompt()
 
+    model_settings = _build_model_settings(config)
+
     agent: Agent[MiniCCDeps, str] = Agent(
         model=model,
         deps_type=MiniCCDeps,
         system_prompt=system_prompt,
+        model_settings=model_settings,
     )
 
     # 注册所有工具
@@ -119,6 +143,6 @@ async def run_agent(
     result = await agent.run(
         prompt,
         deps=deps,
-        message_history=message_history or []
+        message_history=message_history or [],
     )
     return result.output, result.all_messages()

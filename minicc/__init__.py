@@ -27,26 +27,24 @@ MiniCC - 极简教学版 AI 编程助手
 __version__ = "0.1.0"
 __author__ = "MiniCC Contributors"
 
-from .app import MiniCCApp, main
 from .agent import create_agent, run_agent
-from .schemas import MiniCCDeps
+from .app import MiniCCApp, main
 from .config import (
-    load_config,
-    save_config,
-    load_agents_prompt,
-    get_api_key,
+    AGENTS_FILE,
     CONFIG_DIR,
     CONFIG_FILE,
-    AGENTS_FILE,
+    get_api_key,
+    load_agents_prompt,
+    load_config,
+    save_config,
 )
 from .schemas import (
+    AgentTask,
     Config,
+    DiffLine,
+    MiniCCDeps,
     Provider,
     ToolResult,
-    DiffLine,
-    AgentTask,
-    Message,
-    ToolCall,
 )
 
 __all__ = [
@@ -74,6 +72,4 @@ __all__ = [
     "ToolResult",
     "DiffLine",
     "AgentTask",
-    "Message",
-    "ToolCall",
 ]

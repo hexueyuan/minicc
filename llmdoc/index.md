@@ -8,8 +8,22 @@
 |---------|------|------|
 | 概述 | [/llmdoc/overview/](./overview/) | 项目背景、设计目标、技术选型 |
 | 指南 | [/llmdoc/guides/](./guides/) | 安装使用、开发调试指南 |
-| 架构 | [/llmdoc/architecture/](./architecture/) | 系统架构、模块设计 |
+| 架构 | [/llmdoc/architecture/](./architecture/) | 系统架构、模块设计、TUI 布局 |
 | 参考 | [/llmdoc/reference/](./reference/) | API 规范、数据模型 |
+
+## 最近更新
+
+### TUI 首页重构完成 (v1.0 - 2025-11-28)
+- 移除侧边栏（SidePanel）和可折叠面板，采用单行简洁设计
+- 新增 BottomBar 组件（模型/目录/分支/Token 显示）
+- ToolCallLine/SubAgentLine: 单行简洁格式 `🔧 name (param) ✅/❌`
+- 精简 ui/widgets.py: 434 行 → 230 行
+- 精简 schemas.py: 164 行 → 128 行
+- 修复 token 使用量不更新问题（usage 是方法）
+- 详见：
+  - [/llmdoc/architecture/tui-layout.md](./architecture/tui-layout.md) - 布局详细说明
+  - [/llmdoc/architecture/ui-refactor-2025.md](./architecture/ui-refactor-2025.md) - 重构记录
+  - [/llmdoc/reference/ui-components.md](./reference/ui-components.md) - 组件接口参考
 
 ## 核心模块
 

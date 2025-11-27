@@ -20,14 +20,15 @@
 
 ## 模块职责
 
-### schemas.py (118 行)
+### schemas.py (128 行)
 数据模型定义，所有 Pydantic 模型集中管理。
 
 **关键类:**
 - `Config`: 应用配置结构
 - `Provider`: LLM 提供商枚举
 - `ToolResult`: 工具执行结果
-- `AgentTask`: 子任务状态
+- `DiffLine`: Diff 行信息
+- `MiniCCDeps`: Agent 依赖注入容器
 
 ### config.py (155 行)
 配置文件管理，处理 ~/.minicc 目录。
@@ -47,27 +48,54 @@
 - 命令行: bash
 - 子任务: spawn_agent, get_agent_result
 
-### agent.py (123 行)
+### agent.py (148 行)
 Agent 定义，使用 pydantic-ai 创建和配置。
 
-**关键组件:**
-- `MiniCCDeps`: 依赖注入容器
+**关键函数:**
 - `create_model()`: 创建模型标识符
 - `create_agent()`: 创建并配置 Agent
+- `_build_tools()`: 注册工具到 Agent
 
-### app.py (203 行)
-Textual TUI 主应用，处理用户交互。
+### app.py (242 行)
+Textual TUI 主应用，处理用户交互和消息流处理。
 
 **关键功能:**
-- 消息输入和显示
-- 流式输出处理
-- 快捷键绑定
+- 消息输入和显示（MessagePanel）
+- 流式输出处理（工具调用和响应文本）
+- 快捷键绑定（Ctrl+C 退出、Ctrl+L 清屏、Escape 取消）
+- 工具调用回调处理（ToolCallLine / SubAgentLine）
+- Token 使用量追踪和更新（BottomBar.add_tokens）
 
-### ui/widgets.py (212 行)
-自定义 UI 组件。
+**布局结构:**
+```
+Header
+↓
+chat_container (VerticalScroll) - 消息/工具调用/SubAgent
+  ├─ MessagePanel: 用户/助手消息
+  ├─ ToolCallLine: 工具调用（单行简洁）
+  ├─ SubAgentLine: SubAgent 任务（单行简洁）
+  └─ DiffView: 文件变更预览
+↓
+Input - 用户输入框
+↓
+BottomBar - 模型/目录/分支/Token
+↓
+Footer
+```
 
-**组件:**
-- `MessagePanel`: 消息面板
-- `ToolCallPanel`: 工具调用面板
-- `DiffView`: Diff 显示
-- `UsageDisplay`: Token 使用量显示
+### ui/widgets.py (230 行)
+自定义 UI 组件集合，已精简为核心组件。
+
+**保留的组件:**
+- `MessagePanel` (行 15-41): 消息面板，支持 Markdown 渲染和角色区分
+- `ToolCallLine` (行 44-85): 工具调用单行显示 `🔧 tool_name (param) ✅/❌`
+- `SubAgentLine` (行 87-127): SubAgent 单行显示 `🤖 prompt_summary ⏳/🔄/✅/❌`
+- `DiffView` (行 129-189): Diff 显示，颜色区分添加/删除/上下文
+- `BottomBar` (行 191-230): 底边栏，分区块显示模型/目录/分支/Token
+
+**已移除的组件:**
+- `ToolCallPanel` → 被 `ToolCallLine` 替代（更简洁）
+- `SubAgentPanel` → 被 `SubAgentLine` 替代
+- `UsageDisplay` → 功能集成到 `BottomBar`
+- `StatusBar` → 功能已弃用
+- `CollapsibleToolPanel` → 被 `ToolCallLine` 替代

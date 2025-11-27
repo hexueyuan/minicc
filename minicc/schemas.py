@@ -4,15 +4,33 @@ MiniCC 数据模型定义
 所有 Pydantic 模型集中定义在此文件中，提供类型安全的数据结构。
 """
 
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any, Callable, Literal, Optional
+
 from pydantic import BaseModel, Field
 
+
+# ============ 枚举类型 ============
 
 class Provider(str, Enum):
     """LLM 提供商枚举"""
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
+
+
+# ============ 配置模型 ============
+
+class PromptCache(BaseModel):
+    """
+    Anthropic Prompt Cache 配置
+
+    对应 pydantic-ai Anthropic 模型的 prompt caching 设置。
+    每个字段支持 bool（True=5m TTL）或 '5m'/'1h'。
+    """
+    instructions: bool | Literal["5m", "1h"] = False
+    messages: bool | Literal["5m", "1h"] = False
+    tool_definitions: bool | Literal["5m", "1h"] = False
 
 
 class Config(BaseModel):
@@ -26,19 +44,16 @@ class Config(BaseModel):
         model: 模型名称，如 claude-sonnet-4-20250514 或 gpt-4o
         api_key: API 密钥，若为 None 则从环境变量读取
         base_url: 自定义 API 端点（可选，用于代理服务）
+        prompt_cache: Anthropic Prompt Cache 配置
     """
     provider: Provider = Provider.ANTHROPIC
     model: str = "claude-sonnet-4-20250514"
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    prompt_cache: PromptCache = Field(default_factory=PromptCache)
 
 
-class FileOperation(str, Enum):
-    """文件操作类型"""
-    READ = "read"
-    WRITE = "write"
-    UPDATE = "update"
-
+# ============ 工具相关模型 ============
 
 class ToolResult(BaseModel):
     """
@@ -90,42 +105,7 @@ class AgentTask(BaseModel):
     result: Optional[str] = None
 
 
-class Message(BaseModel):
-    """
-    对话消息
-
-    表示用户或助手的单条消息。
-
-    Attributes:
-        role: 消息角色 - "user" 或 "assistant"
-        content: 消息内容
-    """
-    role: str  # "user", "assistant"
-    content: str
-
-
-class ToolCall(BaseModel):
-    """
-    工具调用记录
-
-    记录 Agent 进行的工具调用信息。
-
-    Attributes:
-        tool_name: 工具名称
-        args: 调用参数
-        result: 执行结果
-    """
-    tool_name: str
-    args: dict
-    result: ToolResult
-
-
 # ============ Agent 依赖类型 ============
-# 使用 dataclass 而非 Pydantic 以避免序列化问题
-
-from dataclasses import dataclass, field
-from typing import Any, Callable
-
 
 @dataclass
 class MiniCCDeps:
