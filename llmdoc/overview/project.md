@@ -14,18 +14,20 @@
 ## 核心能力
 
 ### 工具 (Tools)
-- 文件操作: read_file, write_file, update_file
-- 搜索: search_files, grep
-- 命令行: bash
-- 子任务: spawn_agent, get_agent_result
+- **文件操作**: read_file, write_file, edit_file (精确字符串替换)
+- **搜索**: glob_files (高级 glob 模式), grep_search (ripgrepy 高性能)
+- **命令行**: bash, bash_output (后台执行), kill_shell (终止后台任务)
+- **任务管理**: task (创建子任务), todo_write (任务追踪), bash_output (获取后台输出)
+- **Notebook**: notebook_edit (Jupyter notebook 编辑)
 
 ### 提示词 (Prompt)
 - 系统提示词: ~/.minicc/AGENTS.md
 - 工具描述: 从函数 docstring 自动提取
 
 ### 子代理 (SubAgent)
-- 显式 spawn_agent() 工具创建子任务
+- 使用 task() 工具创建子任务 (替代原 spawn_agent)
 - 异步执行，不阻塞主 Agent
+- 支持任务追踪和状态查询
 
 ### 用户界面 (UI)
 - Textual TUI 终端界面，支持流式输出和快捷键操作
@@ -39,7 +41,8 @@
 
 | 决策项 | 选择 | 理由 |
 |--------|------|------|
-| LLM 后端 | Anthropic + OpenAI | 覆盖主流提供商 |
-| 持久化 | 仅配置 | 简化实现 |
-| SubAgent | 显式 spawn | LLM 控制并发 |
-| Diff 显示 | 简单文本 | +/- 颜色标记 |
+| LLM 后端 | Anthropic + OpenAI | 覆盖主流提供商，支持 Prompt Cache |
+| 搜索引擎 | ripgrepy + wcmatch | 高性能，对标 Claude Code |
+| 文件编辑 | edit_file 精确替换 | 避免歧义，支持空白容错 |
+| 后台任务 | bash_output + kill_shell | 支持长运行任务和交互式命令 |
+| Notebook 编辑 | nbformat 库 | 完整的 Jupyter 支持 |

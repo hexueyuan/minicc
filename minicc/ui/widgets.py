@@ -7,9 +7,11 @@ MiniCC 自定义 UI 组件
 from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.text import Text
-from textual.widgets import Static
+from textual.widgets import Static, Button
+from textual.containers import Horizontal
+from textual.message import Message
 
-from ..schemas import DiffLine, ToolResult
+from ..schemas import DiffLine, TodoItem, ToolResult
 
 
 class MessagePanel(Static):
@@ -228,3 +230,90 @@ class BottomBar(Static):
         text.append(f"{self.output_tokens}", style="yellow")
 
         return text
+
+
+class TodoDisplay(Static):
+    """
+    任务列表显示组件
+
+    固定显示当前会话的任务追踪状态，分区显示未完成和已完成任务。
+    任务全部完成时，标题显示关闭按钮 [×]，点击可关闭。
+    """
+
+    class Closed(Message):
+        """任务列表关闭消息"""
+        pass
+
+    def __init__(self, todos: list[TodoItem] | None = None, **kwargs):
+        self.todos: list[TodoItem] = todos or []
+        super().__init__(**kwargs)
+
+    def update_todos(self, todos: list[TodoItem]) -> None:
+        """更新任务列表"""
+        self.todos = todos
+        self.refresh()
+
+    def has_todos(self) -> bool:
+        """是否有任务"""
+        return len(self.todos) > 0
+
+    def is_all_completed(self) -> bool:
+        """是否全部完成"""
+        if not self.todos:
+            return False
+        return all(t.status == "completed" for t in self.todos)
+
+    async def on_click(self, event) -> None:
+        """点击事件：全部完成时点击右上角关闭"""
+        if self.is_all_completed():
+            # 检查点击位置是否在右上角（大约前5个字符宽度）
+            if event.x >= self.size.width - 6:
+                self.post_message(self.Closed())
+
+    def render(self) -> Panel:
+        """渲染任务列表，分区显示未完成和已完成"""
+        if not self.todos:
+            return Panel(Text("暂无任务", style="dim"), title="📋 任务", border_style="dim")
+
+        text = Text()
+
+        # 分离未完成和已完成
+        pending = [t for t in self.todos if t.status in ("pending", "in_progress")]
+        completed = [t for t in self.todos if t.status == "completed"]
+
+        # 统计
+        total = len(self.todos)
+        done = len(completed)
+        progress = f"{done}/{total}"
+
+        # 渲染未完成任务
+        if pending:
+            for todo in pending:
+                if todo.status == "in_progress":
+                    text.append("🔄 ", style="yellow")
+                    text.append(f"{todo.active_form}\n", style="yellow bold")
+                else:
+                    text.append("⏳ ", style="dim")
+                    text.append(f"{todo.content}\n", style="dim")
+
+        # 渲染已完成任务（折叠显示）
+        if completed:
+            if pending:
+                text.append("─" * 20 + "\n", style="dim")
+            text.append(f"✅ 已完成 {done} 项", style="green dim")
+            # 只显示最近3个已完成的
+            recent = completed[-3:] if len(completed) > 3 else completed
+            for todo in recent:
+                text.append(f"\n   ✓ {todo.content}", style="green dim")
+            if len(completed) > 3:
+                text.append(f"\n   ... 及其他 {len(completed) - 3} 项", style="dim")
+
+        # 标题：全部完成时显示关闭按钮
+        all_done = done == total and total > 0
+        if all_done:
+            title = f"📋 任务 ✓ 全部完成 [×]"
+        else:
+            title = f"📋 任务 [{progress}]"
+
+        border = "green" if all_done else "cyan"
+        return Panel(text, title=title, title_align="left", border_style=border)

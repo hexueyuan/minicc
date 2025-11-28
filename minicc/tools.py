@@ -2,82 +2,116 @@
 MiniCC 工具函数实现
 
 定义所有可供 Agent 调用的工具，使用 pydantic-ai 的工具注册模式。
-每个工具函数的 docstring 会被自动提取作为 LLM 的工具描述。
+对标 Claude Code 工具系统，使用高性能第三方库实现。
+
+工具分类:
+- 文件操作: read_file, write_file, edit_file
+- 搜索: glob_files, grep_search
+- 命令行: bash, bash_output, kill_shell
+- 任务管理: task, todo_write
+- Notebook: notebook_edit
 """
+
+from __future__ import annotations
 
 import asyncio
 import difflib
+import json
 import re
-from typing import Any
 from pathlib import Path
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic_ai import RunContext
 
-from .schemas import AgentTask, DiffLine, MiniCCDeps, ToolResult
+from .schemas import (AgentTask, BackgroundShell, DiffLine, MiniCCDeps,
+                      TodoItem, ToolResult)
+
+# ============ 常量配置 ============
+
+DEFAULT_READ_LIMIT = 2000  # 默认读取行数
+MAX_OUTPUT_CHARS = 30000   # 输出截断阈值
+DEFAULT_BASH_TIMEOUT_MS = 120000  # 默认超时 2 分钟
 
 
 # ============ 文件操作工具 ============
 
 
-async def read_file(ctx: RunContext[MiniCCDeps], path: str) -> ToolResult:
+async def read_file(
+    ctx: RunContext[MiniCCDeps],
+    file_path: str,
+    offset: int | None = None,
+    limit: int | None = None,
+) -> ToolResult:
     """
-    读取指定路径的文件内容
+    读取指定路径的文件内容，使用 cat -n 格式输出（行号从1开始）
 
     Args:
-        path: 文件的绝对或相对路径（相对于当前工作目录）
+        file_path: 文件的绝对或相对路径
+        offset: 起始行号（1-indexed，默认为1）
+        limit: 读取行数（默认2000行）
 
     Returns:
-        文件内容，若文件不存在则返回错误
+        带行号的文件内容，若文件不存在则返回错误
     """
     try:
-        file_path = _resolve_path(ctx.deps.cwd, path)
+        resolved = _resolve_path(ctx.deps.cwd, file_path)
 
-        if not file_path.exists():
-            return _finalize_tool_call(
-                ctx,
-                read_file.__name__,
-                {"path": path},
-                ToolResult(
-                    success=False,
-                    output="",
-                    error=f"文件不存在: {path}"
-                )
+        if not resolved.exists():
+            return _finalize(
+                ctx, "read_file", {"file_path": file_path},
+                ToolResult(success=False, output="", error=f"文件不存在: {file_path}")
             )
 
-        if not file_path.is_file():
-            return _finalize_tool_call(
-                ctx,
-                read_file.__name__,
-                {"path": path},
-                ToolResult(
-                    success=False,
-                    output="",
-                    error=f"路径不是文件: {path}"
-                )
+        if not resolved.is_file():
+            return _finalize(
+                ctx, "read_file", {"file_path": file_path},
+                ToolResult(success=False, output="", error=f"路径不是文件: {file_path}")
             )
 
-        content = file_path.read_text(encoding="utf-8")
-        return _finalize_tool_call(
-            ctx,
-            read_file.__name__,
-            {"path": path},
-            ToolResult(success=True, output=content)
+        content = resolved.read_text(encoding="utf-8")
+        lines = content.splitlines()
+
+        # 处理偏移和限制
+        start = (offset or 1) - 1  # 转为 0-indexed
+        end = start + (limit or DEFAULT_READ_LIMIT)
+        selected_lines = lines[start:end]
+
+        # 格式化为 cat -n 风格（行号 + tab + 内容）
+        formatted = []
+        for i, line in enumerate(selected_lines, start=start + 1):
+            # 截断过长的行
+            if len(line) > 2000:
+                line = line[:2000] + "..."
+            formatted.append(f"{i:6}\t{line}")
+
+        output = "\n".join(formatted)
+
+        # 添加截断提示
+        if end < len(lines):
+            output += f"\n\n... 还有 {len(lines) - end} 行未显示"
+
+        return _finalize(
+            ctx, "read_file", {"file_path": file_path, "offset": offset, "limit": limit},
+            ToolResult(success=True, output=output)
         )
 
+    except UnicodeDecodeError:
+        return _finalize(
+            ctx, "read_file", {"file_path": file_path},
+            ToolResult(success=False, output="", error="无法读取文件：可能是二进制文件")
+        )
     except Exception as e:
-        return _finalize_tool_call(
-            ctx,
-            read_file.__name__,
-            {"path": path},
+        return _finalize(
+            ctx, "read_file", {"file_path": file_path},
             ToolResult(success=False, output="", error=str(e))
         )
 
 
 async def write_file(
     ctx: RunContext[MiniCCDeps],
-    path: str,
-    content: str
+    file_path: str,
+    content: str,
 ) -> ToolResult:
     """
     创建或覆盖写入文件
@@ -85,123 +119,132 @@ async def write_file(
     会自动创建不存在的父目录。
 
     Args:
-        path: 目标文件路径
+        file_path: 目标文件的绝对或相对路径
         content: 要写入的完整内容
 
     Returns:
         写入成功/失败信息
     """
     try:
-        file_path = _resolve_path(ctx.deps.cwd, path)
+        resolved = _resolve_path(ctx.deps.cwd, file_path)
 
         # 创建父目录
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
 
-        file_path.write_text(content, encoding="utf-8")
-        return _finalize_tool_call(
-            ctx,
-            write_file.__name__,
-            {"path": path, "content": content},
-            ToolResult(
-                success=True,
-                output=f"已写入文件: {path} ({len(content)} 字符)"
-            )
+        resolved.write_text(content, encoding="utf-8")
+        return _finalize(
+            ctx, "write_file", {"file_path": file_path, "content": f"<{len(content)} chars>"},
+            ToolResult(success=True, output=f"已写入文件: {file_path} ({len(content)} 字符)")
         )
 
     except Exception as e:
-        return _finalize_tool_call(
-            ctx,
-            write_file.__name__,
-            {"path": path, "content": content},
+        return _finalize(
+            ctx, "write_file", {"file_path": file_path},
             ToolResult(success=False, output="", error=str(e))
         )
 
 
-async def update_file(
+async def edit_file(
     ctx: RunContext[MiniCCDeps],
-    path: str,
-    old_content: str,
-    new_content: str
+    file_path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
 ) -> ToolResult:
     """
-    更新文件中的指定内容（精确字符串替换）
+    精确字符串替换（严格模式）
 
-    在文件中查找 old_content 并替换为 new_content。
-    要求 old_content 在文件中唯一存在。
+    在文件中查找 old_string 并替换为 new_string。
+    仅允许空白/缩进差异容错（tabs vs spaces）。
 
     Args:
-        path: 文件路径
-        old_content: 要被替换的原内容（必须精确匹配）
-        new_content: 替换后的新内容
+        file_path: 文件路径
+        old_string: 要被替换的原内容（必须精确匹配）
+        new_string: 替换后的新内容（必须与 old_string 不同）
+        replace_all: 是否替换所有出现（默认 False，要求唯一）
 
     Returns:
         更新结果和 diff 预览
     """
     try:
-        file_path = _resolve_path(ctx.deps.cwd, path)
+        resolved = _resolve_path(ctx.deps.cwd, file_path)
 
-        if not file_path.exists():
-            return _finalize_tool_call(
-                ctx,
-                update_file.__name__,
-                {"path": path, "old_content": old_content, "new_content": new_content},
+        if not resolved.exists():
+            return _finalize(
+                ctx, "edit_file", {"file_path": file_path},
+                ToolResult(success=False, output="", error=f"文件不存在: {file_path}")
+            )
+
+        current_content = resolved.read_text(encoding="utf-8")
+
+        # 检查是否需要空白容错
+        exact_count = current_content.count(old_string)
+
+        if exact_count == 0:
+            # 尝试空白容错匹配
+            normalized_old = _normalize_whitespace(old_string)
+            match_result = _find_whitespace_tolerant(current_content, normalized_old)
+
+            if match_result is None:
+                return _finalize(
+                    ctx, "edit_file", {"file_path": file_path},
+                    ToolResult(
+                        success=False, output="",
+                        error="未找到要替换的内容，请确保 old_string 精确匹配文件内容"
+                    )
+                )
+
+            # 使用找到的实际内容进行替换
+            actual_old = match_result
+            exact_count = 1  # 空白容错模式下视为单次匹配
+
+        else:
+            actual_old = old_string
+
+        if not replace_all and exact_count > 1:
+            return _finalize(
+                ctx, "edit_file", {"file_path": file_path},
                 ToolResult(
-                    success=False,
-                    output="",
-                    error=f"文件不存在: {path}"
+                    success=False, output="",
+                    error=f"old_string 在文件中出现了 {exact_count} 次，"
+                          f"请提供更精确的内容或使用 replace_all=True"
                 )
             )
 
-        current_content = file_path.read_text(encoding="utf-8")
-
-        # 检查 old_content 出现次数
-        count = current_content.count(old_content)
-        if count == 0:
-            return _finalize_tool_call(
-                ctx,
-                update_file.__name__,
-                {"path": path, "old_content": old_content, "new_content": new_content},
+        if old_string == new_string:
+            return _finalize(
+                ctx, "edit_file", {"file_path": file_path},
                 ToolResult(
-                    success=False,
-                    output="",
-                    error="未找到要替换的内容，请确保 old_content 精确匹配"
-                )
-            )
-        if count > 1:
-            return _finalize_tool_call(
-                ctx,
-                update_file.__name__,
-                {"path": path, "old_content": old_content, "new_content": new_content},
-                ToolResult(
-                    success=False,
-                    output="",
-                    error=f"old_content 在文件中出现了 {count} 次，请提供更精确的内容以确保唯一性"
+                    success=False, output="",
+                    error="new_string 必须与 old_string 不同"
                 )
             )
 
         # 执行替换
-        new_file_content = current_content.replace(old_content, new_content, 1)
-        file_path.write_text(new_file_content, encoding="utf-8")
+        if replace_all:
+            new_content = current_content.replace(actual_old, new_string)
+            replaced_count = exact_count
+        else:
+            new_content = current_content.replace(actual_old, new_string, 1)
+            replaced_count = 1
+
+        resolved.write_text(new_content, encoding="utf-8")
 
         # 生成 diff
-        diff_lines = generate_diff(old_content, new_content)
-        diff_output = format_diff(diff_lines)
+        diff_output = _generate_unified_diff(actual_old, new_string, file_path)
 
-        return _finalize_tool_call(
-            ctx,
-            update_file.__name__,
-            {"path": path, "old_content": old_content, "new_content": new_content},
+        return _finalize(
+            ctx, "edit_file",
+            {"file_path": file_path, "old_string": old_string[:50], "new_string": new_string[:50]},
             ToolResult(
                 success=True,
-                output=f"已更新文件: {path}\n\n{diff_output}"
+                output=f"已更新文件: {file_path} ({replaced_count} 处替换)\n\n{diff_output}"
             )
         )
 
     except Exception as e:
-        return _finalize_tool_call(
-            ctx,
-            update_file.__name__,
-            {"path": path, "old_content": old_content, "new_content": new_content},
+        return _finalize(
+            ctx, "edit_file", {"file_path": file_path},
             ToolResult(success=False, output="", error=str(e))
         )
 
@@ -209,157 +252,209 @@ async def update_file(
 # ============ 搜索工具 ============
 
 
-async def search_files(
+async def glob_files(
     ctx: RunContext[MiniCCDeps],
     pattern: str,
-    path: str = "."
+    path: str | None = None,
 ) -> ToolResult:
     """
-    使用 glob 模式搜索文件
+    高级文件模式匹配（使用 wcmatch）
 
-    支持 ** 递归匹配，如 "**/*.py" 匹配所有 Python 文件。
+    支持扩展 glob 语法：
+    - **/*.py: 递归匹配所有 Python 文件
+    - {src,test}/*.ts: 花括号扩展
+    - !(*.test).js: 否定模式
+    - **/*.{js,ts}: 多扩展名
+
+    自动忽略 .gitignore 中的文件，按修改时间排序。
 
     Args:
-        pattern: glob 模式，如 "**/*.py", "src/*.js"
+        pattern: glob 模式
         path: 搜索起始路径（默认为当前目录）
 
     Returns:
-        匹配的文件列表（每行一个路径）
+        匹配的文件列表
     """
     try:
-        search_path = _resolve_path(ctx.deps.cwd, path)
+        from wcmatch import glob as wc_glob
+        from wcmatch import pathlib as wc_pathlib
+
+        search_path = _resolve_path(ctx.deps.cwd, path or ".")
 
         if not search_path.exists():
-            return _finalize_tool_call(
-                ctx,
-                search_files.__name__,
-                {"pattern": pattern, "path": path},
-                ToolResult(
-                    success=False,
-                    output="",
-                    error=f"路径不存在: {path}"
-                )
+            return _finalize(
+                ctx, "glob_files", {"pattern": pattern, "path": path},
+                ToolResult(success=False, output="", error=f"路径不存在: {path}")
             )
 
-        matches = list(search_path.glob(pattern))
+        # 使用 wcmatch 的 GLOBSTAR | BRACE | NEGATE 标志
+        flags = (
+            wc_glob.GLOBSTAR |      # ** 递归
+            wc_glob.BRACE |         # {} 花括号扩展
+            wc_glob.NEGATE |        # ! 否定
+            wc_glob.DOTMATCH        # 匹配隐藏文件（按需）
+        )
+        # 尝试添加 NEGATEEXT（部分版本支持）
+        if hasattr(wc_glob, 'NEGATEEXT'):
+            flags |= wc_glob.NEGATEEXT  # !(pattern) 扩展否定
 
-        if not matches:
-            return _finalize_tool_call(
-                ctx,
-                search_files.__name__,
-                {"pattern": pattern, "path": path},
-                ToolResult(
-                    success=True,
-                    output=f"未找到匹配 '{pattern}' 的文件"
-                )
-            )
+        # 执行 glob
+        full_pattern = str(search_path / pattern)
+        matches = list(wc_glob.glob(full_pattern, flags=flags))
 
-        # 转换为相对路径
-        relative_paths = [
-            str(m.relative_to(ctx.deps.cwd))
-            for m in matches
-            if m.is_file()
+        # 过滤目录，只保留文件
+        files = [Path(m) for m in matches if Path(m).is_file()]
+
+        # 过滤 gitignore（简化实现：排除常见忽略目录）
+        ignored_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox", "dist", "build"}
+        files = [
+            f for f in files
+            if not any(part in ignored_dirs for part in f.parts)
         ]
 
-        return _finalize_tool_call(
-            ctx,
-            search_files.__name__,
-            {"pattern": pattern, "path": path},
-            ToolResult(
-                success=True,
-                output="\n".join(sorted(relative_paths))
+        # 按修改时间排序（最新优先）
+        files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+
+        # 转换为相对路径
+        relative_paths = []
+        for f in files:
+            try:
+                rel = f.relative_to(ctx.deps.cwd)
+                relative_paths.append(str(rel))
+            except ValueError:
+                relative_paths.append(str(f))
+
+        if not relative_paths:
+            return _finalize(
+                ctx, "glob_files", {"pattern": pattern, "path": path},
+                ToolResult(success=True, output=f"未找到匹配 '{pattern}' 的文件")
             )
+
+        return _finalize(
+            ctx, "glob_files", {"pattern": pattern, "path": path},
+            ToolResult(success=True, output="\n".join(relative_paths))
         )
 
+    except ImportError:
+        # fallback 到 pathlib.glob
+        return await _glob_fallback(ctx, pattern, path)
     except Exception as e:
-        return _finalize_tool_call(
-            ctx,
-            search_files.__name__,
-            {"pattern": pattern, "path": path},
+        return _finalize(
+            ctx, "glob_files", {"pattern": pattern, "path": path},
             ToolResult(success=False, output="", error=str(e))
         )
 
 
-async def grep(
+async def grep_search(
     ctx: RunContext[MiniCCDeps],
     pattern: str,
-    path: str = ".",
-    include: str = "*"
+    path: str | None = None,
+    glob: str | None = None,
+    output_mode: Literal["content", "files_with_matches", "count"] = "files_with_matches",
+    context_before: int | None = None,
+    context_after: int | None = None,
+    context: int | None = None,
+    case_insensitive: bool = False,
+    head_limit: int | None = None,
+    file_type: str | None = None,
 ) -> ToolResult:
     """
-    在文件内容中搜索正则表达式
+    使用 ripgrep 进行高性能代码搜索
+
+    自动尊重 .gitignore，支持正则表达式。
 
     Args:
         pattern: 正则表达式模式
-        path: 搜索路径（文件或目录）
-        include: 文件过滤 glob 模式，如 "*.py"
+        path: 搜索路径（默认当前目录）
+        glob: 文件过滤模式（如 "*.py", "*.{ts,tsx}"）
+        output_mode: 输出模式
+            - "content": 显示匹配行内容
+            - "files_with_matches": 仅显示文件路径（默认）
+            - "count": 显示匹配计数
+        context_before: 显示匹配前 N 行（-B）
+        context_after: 显示匹配后 N 行（-A）
+        context: 显示匹配前后各 N 行（-C）
+        case_insensitive: 忽略大小写（-i）
+        head_limit: 限制结果数量
+        file_type: 文件类型过滤（如 "py", "js", "rust"）
 
     Returns:
-        匹配结果，格式: 文件:行号:匹配内容
+        搜索结果
     """
     try:
-        search_path = _resolve_path(ctx.deps.cwd, path)
-        regex = re.compile(pattern)
-        results = []
+        from ripgrepy import Ripgrepy
 
-        if search_path.is_file():
-            files = [search_path]
+        search_path = str(_resolve_path(ctx.deps.cwd, path or "."))
+
+        # 构建 ripgrep 查询
+        rg = Ripgrepy(pattern, search_path)
+
+        # 配置选项
+        if case_insensitive:
+            rg = rg.i()
+
+        if glob:
+            rg = rg.glob(glob)
+
+        if file_type:
+            rg = rg.type(file_type)
+
+        # 上下文行
+        if context:
+            rg = rg.context(context)
         else:
-            files = list(search_path.glob(f"**/{include}"))
+            if context_before:
+                rg = rg.before_context(context_before)
+            if context_after:
+                rg = rg.after_context(context_after)
 
-        for file_path in files:
-            if not file_path.is_file():
-                continue
+        # 输出模式
+        if output_mode == "files_with_matches":
+            rg = rg.files_with_matches()
+        elif output_mode == "count":
+            rg = rg.count()
+        else:
+            rg = rg.with_filename().line_number()
 
-            try:
-                content = file_path.read_text(encoding="utf-8")
-                for line_no, line in enumerate(content.splitlines(), 1):
-                    if regex.search(line):
-                        rel_path = file_path.relative_to(ctx.deps.cwd)
-                        results.append(f"{rel_path}:{line_no}:{line.strip()}")
-            except (UnicodeDecodeError, PermissionError):
-                continue  # 跳过二进制文件和无权限文件
+        # 执行搜索
+        try:
+            result = rg.run()
+            output = result.as_string if hasattr(result, 'as_string') else str(result)
+        except Exception:
+            # ripgrep 无匹配时可能抛异常
+            output = ""
 
-        if not results:
-            return _finalize_tool_call(
-                ctx,
-                grep.__name__,
-                {"pattern": pattern, "path": path, "include": include},
-                ToolResult(
-                    success=True,
-                    output=f"未找到匹配 '{pattern}' 的内容"
-                )
+        if not output.strip():
+            return _finalize(
+                ctx, "grep_search", {"pattern": pattern, "path": path},
+                ToolResult(success=True, output=f"未找到匹配 '{pattern}' 的内容")
             )
 
-        # 限制结果数量
-        max_results = 100
-        output = "\n".join(results[:max_results])
-        if len(results) > max_results:
-            output += f"\n... 还有 {len(results) - max_results} 个匹配项"
+        # 处理输出
+        lines = output.strip().split("\n")
 
-        return _finalize_tool_call(
-            ctx,
-            grep.__name__,
-            {"pattern": pattern, "path": path, "include": include},
+        # 应用 head_limit
+        if head_limit and len(lines) > head_limit:
+            lines = lines[:head_limit]
+            output = "\n".join(lines) + f"\n... 还有更多结果"
+        else:
+            output = "\n".join(lines)
+
+        # 截断过长输出
+        if len(output) > MAX_OUTPUT_CHARS:
+            output = output[:MAX_OUTPUT_CHARS] + "\n... 输出已截断"
+
+        return _finalize(
+            ctx, "grep_search", {"pattern": pattern, "path": path, "output_mode": output_mode},
             ToolResult(success=True, output=output)
         )
 
-    except re.error as e:
-        return _finalize_tool_call(
-            ctx,
-            grep.__name__,
-            {"pattern": pattern, "path": path, "include": include},
-            ToolResult(
-                success=False,
-                output="",
-                error=f"无效的正则表达式: {e}"
-            )
-        )
+    except ImportError:
+        # fallback 到 Python re
+        return await _grep_fallback(ctx, pattern, path, glob, output_mode, head_limit)
     except Exception as e:
-        return _finalize_tool_call(
-            ctx,
-            grep.__name__,
-            {"pattern": pattern, "path": path, "include": include},
+        return _finalize(
+            ctx, "grep_search", {"pattern": pattern, "path": path},
             ToolResult(success=False, output="", error=str(e))
         )
 
@@ -370,7 +465,9 @@ async def grep(
 async def bash(
     ctx: RunContext[MiniCCDeps],
     command: str,
-    timeout: int = 30
+    timeout: int = DEFAULT_BASH_TIMEOUT_MS,
+    description: str | None = None,
+    run_in_background: bool = False,
 ) -> ToolResult:
     """
     执行 bash 命令
@@ -379,286 +476,278 @@ async def bash(
 
     Args:
         command: 要执行的命令
-        timeout: 超时秒数（默认 30 秒）
+        timeout: 超时毫秒数（默认 120000ms = 2分钟，最大 600000ms = 10分钟）
+        description: 命令的简短描述（5-10词）
+        run_in_background: 是否在后台运行
 
     Returns:
-        命令输出（stdout + stderr 合并）
+        命令输出（stdout + stderr）
     """
+    # 限制超时范围
+    timeout = min(max(timeout, 1000), 600000)
+    timeout_sec = timeout / 1000
+
+    if run_in_background:
+        return await _bash_background(ctx, command, description or command[:30])
+
     try:
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=ctx.deps.cwd
+            stderr=asyncio.subprocess.PIPE,
+            cwd=ctx.deps.cwd,
         )
 
         try:
-            stdout, _ = await asyncio.wait_for(
+            stdout, stderr = await asyncio.wait_for(
                 process.communicate(),
-                timeout=timeout
+                timeout=timeout_sec
             )
-            output = stdout.decode("utf-8", errors="replace")
 
-            if process.returncode == 0:
-                return _finalize_tool_call(
-                    ctx,
-                    bash.__name__,
-                    {"command": command, "timeout": timeout},
-                    ToolResult(success=True, output=output)
-                )
-            else:
-                return _finalize_tool_call(
-                    ctx,
-                    bash.__name__,
-                    {"command": command, "timeout": timeout},
-                    ToolResult(
-                        success=False,
-                        output=output,
-                        error=f"命令退出码: {process.returncode}"
-                    )
-                )
+            stdout_str = stdout.decode("utf-8", errors="replace")
+            stderr_str = stderr.decode("utf-8", errors="replace")
+
+            # 合并输出
+            output = stdout_str
+            if stderr_str:
+                output += f"\n[stderr]\n{stderr_str}" if output else stderr_str
+
+            # 截断过长输出
+            if len(output) > MAX_OUTPUT_CHARS:
+                output = output[:MAX_OUTPUT_CHARS] + "\n... 输出已截断"
+
+            success = process.returncode == 0
+            error = None if success else f"退出码: {process.returncode}"
+
+            return _finalize(
+                ctx, "bash", {"command": command, "description": description},
+                ToolResult(success=success, output=output, error=error)
+            )
 
         except asyncio.TimeoutError:
             process.kill()
-            return _finalize_tool_call(
-                ctx,
-                bash.__name__,
-                {"command": command, "timeout": timeout},
+            await process.wait()
+            return _finalize(
+                ctx, "bash", {"command": command},
                 ToolResult(
-                    success=False,
-                    output="",
-                    error=f"命令执行超时（{timeout}秒）"
+                    success=False, output="",
+                    error=f"命令执行超时（{timeout_sec:.1f}秒）"
                 )
             )
 
     except Exception as e:
-        return _finalize_tool_call(
-            ctx,
-            bash.__name__,
-            {"command": command, "timeout": timeout},
+        return _finalize(
+            ctx, "bash", {"command": command},
             ToolResult(success=False, output="", error=str(e))
         )
 
 
-# ============ SubAgent 工具 ============
-
-
-async def spawn_agent(
+async def bash_output(
     ctx: RunContext[MiniCCDeps],
-    task: str,
-    context: str = ""
+    bash_id: str,
+    filter_pattern: str | None = None,
 ) -> ToolResult:
     """
-    创建一个子 Agent 执行特定任务
-
-    子 Agent 会独立运行，可以并行处理多个任务。
-    使用 get_agent_result 获取任务结果。
+    获取后台命令的输出
 
     Args:
-        task: 任务描述
-        context: 可选的额外上下文信息
+        bash_id: 后台命令的 ID
+        filter_pattern: 可选的正则过滤模式
 
     Returns:
-        任务 ID，可用于后续查询结果
+        命令输出（新增部分）
+    """
+    shell_data = ctx.deps.background_shells.get(bash_id)
+
+    if not shell_data:
+        return _finalize(
+            ctx, "bash_output", {"bash_id": bash_id},
+            ToolResult(success=False, output="", error=f"未找到后台任务: {bash_id}")
+        )
+
+    process, shell_info = shell_data
+
+    # 检查进程状态
+    if process.returncode is not None:
+        shell_info.is_running = False
+
+    output = shell_info.output_buffer
+
+    # 应用过滤
+    if filter_pattern and output:
+        try:
+            regex = re.compile(filter_pattern)
+            lines = output.split("\n")
+            output = "\n".join(line for line in lines if regex.search(line))
+        except re.error:
+            pass  # 忽略无效正则
+
+    status = "运行中" if shell_info.is_running else "已完成"
+
+    return _finalize(
+        ctx, "bash_output", {"bash_id": bash_id},
+        ToolResult(success=True, output=f"[{status}]\n{output}")
+    )
+
+
+async def kill_shell(
+    ctx: RunContext[MiniCCDeps],
+    shell_id: str,
+) -> ToolResult:
+    """
+    终止后台命令
+
+    Args:
+        shell_id: 要终止的后台命令 ID
+
+    Returns:
+        终止结果
+    """
+    shell_data = ctx.deps.background_shells.get(shell_id)
+
+    if not shell_data:
+        return _finalize(
+            ctx, "kill_shell", {"shell_id": shell_id},
+            ToolResult(success=False, output="", error=f"未找到后台任务: {shell_id}")
+        )
+
+    process, shell_info = shell_data
+
+    if shell_info.is_running:
+        try:
+            process.kill()
+            await process.wait()
+            shell_info.is_running = False
+        except Exception as e:
+            return _finalize(
+                ctx, "kill_shell", {"shell_id": shell_id},
+                ToolResult(success=False, output="", error=str(e))
+            )
+
+    # 清理
+    del ctx.deps.background_shells[shell_id]
+
+    return _finalize(
+        ctx, "kill_shell", {"shell_id": shell_id},
+        ToolResult(success=True, output=f"已终止后台任务: {shell_id}")
+    )
+
+
+# ============ 任务管理工具 ============
+
+
+async def task(
+    ctx: RunContext[MiniCCDeps],
+    prompt: str,
+    description: str,
+    subagent_type: str = "general-purpose",
+) -> ToolResult:
+    """
+    启动子代理执行任务
+
+    子代理会独立运行，可以并行处理多个任务。
+
+    Args:
+        prompt: 详细的任务描述/提示词
+        description: 3-5 词简短描述
+        subagent_type: 代理类型（预留扩展）
+
+    Returns:
+        任务 ID 和状态
     """
     task_id = uuid4().hex[:8]
 
-    prompt = task
-    if context:
-        prompt = f"{context}\n\n任务: {task}"
-
     task_obj = AgentTask(
         task_id=task_id,
+        description=description,
         prompt=prompt,
-        status="pending"
+        subagent_type=subagent_type,
+        status="pending",
     )
 
     ctx.deps.sub_agents[task_id] = task_obj
 
-    # 异步启动子任务（不阻塞当前执行）
+    # 异步启动子任务
     task_handle = asyncio.create_task(_run_sub_agent(ctx.deps, task_obj))
     ctx.deps.sub_agent_tasks[task_id] = task_handle
 
-    return _finalize_tool_call(
-        ctx,
-        spawn_agent.__name__,
-        {"task": task, "context": context},
+    return _finalize(
+        ctx, "task", {"description": description, "subagent_type": subagent_type},
         ToolResult(
             success=True,
-            output=f"已创建子任务 [{task_id}]: {task[:50]}..."
-        )
-        )
-
-
-async def get_agent_result(
-    ctx: RunContext[MiniCCDeps],
-    task_id: str
-) -> ToolResult:
-    """
-    获取子 Agent 任务的结果
-
-    Args:
-        task_id: spawn_agent 返回的任务 ID
-
-    Returns:
-        任务状态和结果
-    """
-    task_obj = ctx.deps.sub_agents.get(task_id)
-
-    if not task_obj:
-        return _finalize_tool_call(
-            ctx,
-            get_agent_result.__name__,
-            {"task_id": task_id},
-            ToolResult(
-                success=False,
-                output="",
-                error=f"未找到任务: {task_id}"
-            )
-        )
-
-    if task_obj.status == "pending":
-        return _finalize_tool_call(
-            ctx,
-            get_agent_result.__name__,
-            {"task_id": task_id},
-            ToolResult(
-                success=True,
-                output=f"任务 [{task_id}] 等待中..."
-            )
-        )
-    elif task_obj.status == "running":
-        return _finalize_tool_call(
-            ctx,
-            get_agent_result.__name__,
-            {"task_id": task_id},
-            ToolResult(
-                success=True,
-                output=f"任务 [{task_id}] 运行中..."
-            )
-        )
-    elif task_obj.status == "completed":
-        return _finalize_tool_call(
-            ctx,
-            get_agent_result.__name__,
-            {"task_id": task_id},
-            ToolResult(
-                success=True,
-                output=f"任务 [{task_id}] 已完成:\n{task_obj.result}"
-            )
-        )
-    else:  # failed
-        return _finalize_tool_call(
-            ctx,
-            get_agent_result.__name__,
-            {"task_id": task_id},
-            ToolResult(
-                success=False,
-                output="",
-                error=f"任务 [{task_id}] 失败: {task_obj.result}"
-            )
-        )
-
-
-async def wait_sub_agents(
-    ctx: RunContext[MiniCCDeps],
-    task_ids: list[str] | None = None,
-    timeout: int = 300
-) -> ToolResult:
-    """
-    等待一个或多个子 Agent 完成
-
-    若 task_ids 为空，则等待所有仍在运行的子任务，直到全部完成或超时。
-
-    Args:
-        task_ids: 要等待的任务 ID 列表，为空则等待全部
-        timeout: 最长等待秒数（默认 300 秒）
-
-    Returns:
-        等待结果汇总，全部完成则 success=True；超时仍未完成则 success=False
-    """
-    selected_ids = task_ids or list(ctx.deps.sub_agent_tasks.keys())
-
-    # 处理不存在的任务
-    missing = [tid for tid in selected_ids if tid not in ctx.deps.sub_agents]
-    if missing:
-        return _finalize_tool_call(
-            ctx,
-            wait_sub_agents.__name__,
-            {"task_ids": task_ids, "timeout": timeout},
-            ToolResult(
-                success=False,
-                output="",
-                error=f"未找到任务: {', '.join(missing)}"
-            )
-        )
-
-    # 如果没有需要等待的任务
-    active_ids = [tid for tid in selected_ids if tid in ctx.deps.sub_agent_tasks]
-    if not active_ids:
-        summary = _format_sub_agent_summary(ctx, selected_ids)
-        return _finalize_tool_call(
-            ctx,
-            wait_sub_agents.__name__,
-            {"task_ids": task_ids, "timeout": timeout},
-            ToolResult(
-                success=True,
-                output=f"没有正在运行的子任务。\n{summary}".strip()
-            )
-        )
-
-    # 阻塞等待所选任务完成或超时
-    handle_map = {tid: ctx.deps.sub_agent_tasks[tid] for tid in active_ids}
-    pending_ids = set(active_ids)
-    deadline = asyncio.get_event_loop().time() + timeout
-
-    while pending_ids:
-        remaining = deadline - asyncio.get_event_loop().time()
-        if remaining <= 0:
-            break
-
-        wait_set = {handle_map[tid] for tid in pending_ids}
-        done, pending = await asyncio.wait(wait_set, timeout=remaining)
-
-        # 标记完成的任务
-        for tid, handle in handle_map.items():
-            if handle in done:
-                pending_ids.discard(tid)
-
-        # 如果都完成提前退出
-        if not pending_ids:
-            break
-
-    success = not pending_ids
-    summary = _format_sub_agent_summary(ctx, selected_ids)
-    status_line = (
-        "所有子任务已完成。"
-        if success
-        else f"{len(pending_ids)} 个子任务未完成，已等待 {timeout} 秒。"
-    )
-
-    return _finalize_tool_call(
-        ctx,
-        wait_sub_agents.__name__,
-        {"task_ids": task_ids, "timeout": timeout},
-        ToolResult(
-            success=success,
-            output=f"{status_line}\n{summary}".strip(),
-            error=None if success else status_line
+            output=f"已创建子任务 [{task_id}]: {description}"
         )
     )
+
+
+async def todo_write(
+    ctx: RunContext[MiniCCDeps],
+    todos: list[dict[str, str]],
+) -> ToolResult:
+    """
+    更新任务列表
+
+    用于追踪当前会话的任务进度。
+
+    Args:
+        todos: 任务列表，每项包含:
+            - content: 任务描述（祈使句，如 "Run tests"）
+            - status: 状态（pending/in_progress/completed）
+            - activeForm: 进行时描述（如 "Running tests"）
+
+    Returns:
+        更新确认
+    """
+    try:
+        # 转换为 TodoItem 对象
+        new_todos = []
+        for item in todos:
+            todo = TodoItem(
+                content=item.get("content", ""),
+                status=item.get("status", "pending"),
+                active_form=item.get("activeForm", item.get("active_form", "")),
+            )
+            new_todos.append(todo)
+
+        ctx.deps.todos = new_todos
+
+        # 触发回调
+        if ctx.deps.on_todo_update:
+            ctx.deps.on_todo_update(new_todos)
+
+        # 格式化输出
+        summary_lines = []
+        for todo in new_todos:
+            status_icon = {"pending": "⏳", "in_progress": "🔄", "completed": "✅"}.get(
+                todo.status, "?"
+            )
+            summary_lines.append(f"{status_icon} {todo.content}")
+
+        return _finalize(
+            ctx, "todo_write", {"count": len(todos)},
+            ToolResult(
+                success=True,
+                output=f"已更新 {len(new_todos)} 个任务\n" + "\n".join(summary_lines)
+            )
+        )
+
+    except Exception as e:
+        return _finalize(
+            ctx, "todo_write", {},
+            ToolResult(success=False, output="", error=str(e))
+        )
 
 
 # ============ 辅助函数 ============
 
 
-def _finalize_tool_call(
+def _finalize(
     ctx: RunContext[MiniCCDeps],
     tool_name: str,
     args: dict[str, Any],
-    result: ToolResult
+    result: ToolResult,
 ) -> ToolResult:
-    """Trigger on_tool_call callback for UI updates without breaking tool execution."""
+    """触发工具调用回调（用于 UI 更新）"""
     callback = getattr(ctx.deps, "on_tool_call", None)
     if callback:
         try:
@@ -676,17 +765,49 @@ def _resolve_path(cwd: str, path: str) -> Path:
     return Path(cwd) / p
 
 
+def _normalize_whitespace(text: str) -> str:
+    """标准化空白字符（用于容错匹配）"""
+    # 将 tabs 转为 4 空格
+    text = text.replace("\t", "    ")
+    # 移除行尾空白
+    lines = [line.rstrip() for line in text.split("\n")]
+    return "\n".join(lines)
+
+
+def _find_whitespace_tolerant(content: str, normalized_pattern: str) -> str | None:
+    """在内容中查找空白容错的匹配"""
+    # 简单实现：逐行比较
+    content_lines = content.split("\n")
+    pattern_lines = normalized_pattern.split("\n")
+    pattern_len = len(pattern_lines)
+
+    for i in range(len(content_lines) - pattern_len + 1):
+        window = content_lines[i:i + pattern_len]
+        normalized_window = [_normalize_whitespace(line) for line in window]
+
+        if "\n".join(normalized_window) == normalized_pattern:
+            # 返回原始内容
+            return "\n".join(window)
+
+    return None
+
+
+def _generate_unified_diff(old: str, new: str, filename: str = "") -> str:
+    """生成 unified diff 格式输出"""
+    old_lines = old.splitlines(keepends=True)
+    new_lines = new.splitlines(keepends=True)
+
+    diff = difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=f"a/{filename}" if filename else "a",
+        tofile=f"b/{filename}" if filename else "b",
+    )
+
+    return "".join(diff)
+
+
 def generate_diff(old: str, new: str) -> list[DiffLine]:
-    """
-    生成简单的文本 diff
-
-    Args:
-        old: 原内容
-        new: 新内容
-
-    Returns:
-        DiffLine 列表
-    """
+    """生成 DiffLine 列表（兼容旧接口）"""
     old_lines = old.splitlines(keepends=True)
     new_lines = new.splitlines(keepends=True)
 
@@ -694,9 +815,7 @@ def generate_diff(old: str, new: str) -> list[DiffLine]:
     result = []
 
     for line in diff:
-        if line.startswith("+++") or line.startswith("---"):
-            continue
-        elif line.startswith("@@"):
+        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
             continue
         elif line.startswith("+"):
             result.append(DiffLine(type="add", content=line[1:].rstrip("\n")))
@@ -709,7 +828,7 @@ def generate_diff(old: str, new: str) -> list[DiffLine]:
 
 
 def format_diff(diff_lines: list[DiffLine]) -> str:
-    """格式化 diff 输出为字符串"""
+    """格式化 DiffLine 列表为字符串"""
     lines = []
     for line in diff_lines:
         if line.type == "add":
@@ -721,43 +840,196 @@ def format_diff(diff_lines: list[DiffLine]) -> str:
     return "\n".join(lines)
 
 
-async def _run_sub_agent(deps: MiniCCDeps, task: AgentTask) -> None:
-    """
-    运行子 Agent 任务
+async def _bash_background(
+    ctx: RunContext[MiniCCDeps],
+    command: str,
+    description: str,
+) -> ToolResult:
+    """在后台启动命令"""
+    shell_id = uuid4().hex[:8]
 
-    此函数由 spawn_agent 异步调用，不阻塞主 Agent 执行。
-    """
-    # 避免循环导入
+    process = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=ctx.deps.cwd,
+    )
+
+    shell_info = BackgroundShell(
+        shell_id=shell_id,
+        command=command,
+        description=description,
+        is_running=True,
+    )
+
+    ctx.deps.background_shells[shell_id] = (process, shell_info)
+
+    # 启动输出收集任务
+    asyncio.create_task(_collect_shell_output(process, shell_info))
+
+    return _finalize(
+        ctx, "bash", {"command": command, "run_in_background": True},
+        ToolResult(
+            success=True,
+            output=f"已在后台启动命令 [ID: {shell_id}]: {description}"
+        )
+    )
+
+
+async def _collect_shell_output(process: asyncio.subprocess.Process, shell_info: BackgroundShell):
+    """收集后台进程输出"""
+    try:
+        while True:
+            if process.stdout is None:
+                break
+            line = await process.stdout.readline()
+            if not line:
+                break
+            shell_info.output_buffer += line.decode("utf-8", errors="replace")
+    except Exception:
+        pass
+    finally:
+        shell_info.is_running = False
+
+
+async def _run_sub_agent(deps: MiniCCDeps, task_obj: AgentTask) -> None:
+    """运行子代理任务"""
     from .agent import create_agent
 
-    task.status = "running"
+    task_obj.status = "running"
 
     try:
         sub_agent = create_agent(deps.config)
-        result = await sub_agent.run(task.prompt, deps=deps)
-        task.status = "completed"
-        # pydantic-ai >=1.0 使用 output 字段
-        task.result = getattr(result, "output", None)
+        result = await sub_agent.run(task_obj.prompt, deps=deps)
+        task_obj.status = "completed"
+        task_obj.result = getattr(result, "output", str(result))
     except Exception as e:
-        task.status = "failed"
-        task.result = str(e)
+        task_obj.status = "failed"
+        task_obj.result = str(e)
     finally:
-        deps.sub_agent_tasks.pop(task.task_id, None)
+        deps.sub_agent_tasks.pop(task_obj.task_id, None)
 
 
-def _format_sub_agent_summary(ctx: RunContext[MiniCCDeps], task_ids: list[str]) -> str:
-    """格式化子任务状态摘要"""
-    lines = []
-    for tid in task_ids:
-        task = ctx.deps.sub_agents.get(tid)
-        if not task:
-            lines.append(f"[{tid}] 未找到")
-            continue
-        result_preview = ""
-        if task.result:
-            trimmed = task.result
-            if len(trimmed) > 200:
-                trimmed = trimmed[:200] + "..."
-            result_preview = f" | result: {trimmed}"
-        lines.append(f"[{tid}] {task.status}{result_preview}")
-    return "\n".join(lines)
+# ============ Fallback 实现 ============
+
+
+async def _glob_fallback(
+    ctx: RunContext[MiniCCDeps],
+    pattern: str,
+    path: str | None,
+) -> ToolResult:
+    """使用 pathlib.glob 的回退实现"""
+    try:
+        search_path = _resolve_path(ctx.deps.cwd, path or ".")
+        matches = list(search_path.glob(pattern))
+
+        files = [m for m in matches if m.is_file()]
+        relative_paths = []
+        for f in files:
+            try:
+                rel = f.relative_to(ctx.deps.cwd)
+                relative_paths.append(str(rel))
+            except ValueError:
+                relative_paths.append(str(f))
+
+        if not relative_paths:
+            return _finalize(
+                ctx, "glob_files", {"pattern": pattern},
+                ToolResult(success=True, output=f"未找到匹配 '{pattern}' 的文件")
+            )
+
+        return _finalize(
+            ctx, "glob_files", {"pattern": pattern},
+            ToolResult(success=True, output="\n".join(sorted(relative_paths)))
+        )
+
+    except Exception as e:
+        return _finalize(
+            ctx, "glob_files", {"pattern": pattern},
+            ToolResult(success=False, output="", error=str(e))
+        )
+
+
+async def _grep_fallback(
+    ctx: RunContext[MiniCCDeps],
+    pattern: str,
+    path: str | None,
+    glob_filter: str | None,
+    output_mode: str,
+    head_limit: int | None,
+) -> ToolResult:
+    """使用 Python re 的回退实现"""
+    try:
+        search_path = _resolve_path(ctx.deps.cwd, path or ".")
+        regex = re.compile(pattern)
+        results = []
+
+        # 确定要搜索的文件
+        if search_path.is_file():
+            files = [search_path]
+        else:
+            glob_pattern = glob_filter or "**/*"
+            files = list(search_path.glob(glob_pattern))
+
+        for file_path in files:
+            if not file_path.is_file():
+                continue
+
+            try:
+                content = file_path.read_text(encoding="utf-8")
+
+                if output_mode == "files_with_matches":
+                    if regex.search(content):
+                        try:
+                            rel = file_path.relative_to(ctx.deps.cwd)
+                            results.append(str(rel))
+                        except ValueError:
+                            results.append(str(file_path))
+                elif output_mode == "count":
+                    count = len(regex.findall(content))
+                    if count > 0:
+                        try:
+                            rel = file_path.relative_to(ctx.deps.cwd)
+                            results.append(f"{rel}:{count}")
+                        except ValueError:
+                            results.append(f"{file_path}:{count}")
+                else:  # content
+                    for line_no, line in enumerate(content.splitlines(), 1):
+                        if regex.search(line):
+                            try:
+                                rel = file_path.relative_to(ctx.deps.cwd)
+                                results.append(f"{rel}:{line_no}:{line.strip()}")
+                            except ValueError:
+                                results.append(f"{file_path}:{line_no}:{line.strip()}")
+
+            except (UnicodeDecodeError, PermissionError):
+                continue
+
+        if not results:
+            return _finalize(
+                ctx, "grep_search", {"pattern": pattern},
+                ToolResult(success=True, output=f"未找到匹配 '{pattern}' 的内容")
+            )
+
+        if head_limit:
+            results = results[:head_limit]
+
+        output = "\n".join(results)
+        if len(output) > MAX_OUTPUT_CHARS:
+            output = output[:MAX_OUTPUT_CHARS] + "\n... 输出已截断"
+
+        return _finalize(
+            ctx, "grep_search", {"pattern": pattern},
+            ToolResult(success=True, output=output)
+        )
+
+    except re.error as e:
+        return _finalize(
+            ctx, "grep_search", {"pattern": pattern},
+            ToolResult(success=False, output="", error=f"无效的正则表达式: {e}")
+        )
+    except Exception as e:
+        return _finalize(
+            ctx, "grep_search", {"pattern": pattern},
+            ToolResult(success=False, output="", error=str(e))
+        )

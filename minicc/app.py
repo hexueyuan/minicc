@@ -19,7 +19,7 @@ from pydantic_ai.messages import PartDeltaEvent, PartStartEvent, TextPart, TextP
 from .agent import create_agent
 from .config import load_config
 from .schemas import Config, MiniCCDeps
-from .ui.widgets import MessagePanel, BottomBar, ToolCallLine, SubAgentLine
+from .ui.widgets import MessagePanel, BottomBar, ToolCallLine, SubAgentLine, TodoDisplay
 
 
 class MiniCCApp(App):
@@ -57,7 +57,8 @@ class MiniCCApp(App):
         self.deps = MiniCCDeps(
             config=self.config,
             cwd=os.getcwd(),
-            on_tool_call=self._on_tool_call
+            on_tool_call=self._on_tool_call,
+            on_todo_update=self._on_todo_update
         )
         self.messages: list[Any] = []
         self._is_processing = False
@@ -83,6 +84,7 @@ class MiniCCApp(App):
         """定义 UI 布局"""
         yield Header(show_clock=True)
         yield VerticalScroll(id="chat_container")
+        yield TodoDisplay(id="todo_display")  # 固定的任务列表区域
         yield Input(id="input", placeholder="输入消息... (Ctrl+C 退出)")
         yield BottomBar(
             model=f"{self.config.provider.value}:{self.config.model}",
@@ -95,6 +97,8 @@ class MiniCCApp(App):
     def on_mount(self) -> None:
         """应用挂载后初始化"""
         self.query_one("#input", Input).focus()
+        # 初始隐藏空的任务列表
+        self.query_one("#todo_display", TodoDisplay).display = False
         self._show_welcome()
 
     def _show_welcome(self) -> None:
@@ -172,13 +176,12 @@ class MiniCCApp(App):
 
         在工具执行后被调用，将工具调用显示到会话框。
         """
-        # 检查是否是 spawn_agent 工具
-        if tool_name == "spawn_agent":
-            task_id = result.output if result.success else "unknown"
-            prompt = args.get("prompt", "")
+        # 检查是否是 task 工具（原 spawn_agent）
+        if tool_name == "task":
+            description = args.get("description", "")
             line = SubAgentLine(
-                task_id=task_id,
-                prompt=prompt,
+                task_id=result.output if result.success else "unknown",
+                prompt=description,
                 status="running" if result.success else "failed"
             )
         else:
@@ -187,6 +190,30 @@ class MiniCCApp(App):
         chat = self._chat_container()
         chat.mount(line)
         chat.scroll_end(animate=False)
+
+    def _on_todo_update(self, todos: list) -> None:
+        """
+        任务列表更新回调
+
+        当 todo_write 工具被调用时触发，更新固定的任务列表显示。
+        """
+        try:
+            todo_display = self.query_one("#todo_display", TodoDisplay)
+            todo_display.update_todos(todos)
+            # 有任务时显示，无任务时隐藏
+            todo_display.display = len(todos) > 0
+        except Exception:
+            pass
+
+    def on_todo_display_closed(self, message: TodoDisplay.Closed) -> None:
+        """处理任务列表关闭事件"""
+        try:
+            todo_display = self.query_one("#todo_display", TodoDisplay)
+            todo_display.update_todos([])
+            todo_display.display = False
+            self.deps.todos = []
+        except Exception:
+            pass
 
     def action_clear(self) -> None:
         """清屏动作"""
@@ -198,6 +225,14 @@ class MiniCCApp(App):
         try:
             bottom_bar = self.query_one(BottomBar)
             bottom_bar.update_info(input_tokens=0, output_tokens=0)
+        except Exception:
+            pass
+        # 清除并隐藏 todo 列表
+        try:
+            todo_display = self.query_one("#todo_display", TodoDisplay)
+            todo_display.update_todos([])
+            todo_display.display = False
+            self.deps.todos = []
         except Exception:
             pass
         self._show_welcome()

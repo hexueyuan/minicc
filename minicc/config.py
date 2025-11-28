@@ -15,36 +15,15 @@ CONFIG_DIR = Path.home() / ".minicc"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 AGENTS_FILE = CONFIG_DIR / "AGENTS.md"
 
-# 默认系统提示词（当 AGENTS.md 不存在时使用）
-DEFAULT_SYSTEM_PROMPT = """# MiniCC Agent
+# 内置系统提示词文件路径
+BUILTIN_PROMPT_FILE = Path(__file__).parent / "prompts" / "system.md"
 
-你是一个代码助手，可以帮助用户完成各种编程任务。
 
-## 可用工具
-
-### 文件操作
-- `read_file`: 读取文件内容
-- `write_file`: 创建或覆盖文件
-- `update_file`: 更新文件中的特定内容
-
-### 搜索
-- `search_files`: 按 glob 模式搜索文件
-- `grep`: 在文件内容中搜索正则表达式
-
-### 命令行
-- `bash`: 执行 shell 命令
-
-### 子任务
-- `spawn_agent`: 创建子 Agent 处理独立任务
-- `wait_sub_agents`: 等待一个或多个子任务完成（可设置超时）
-
-## 使用指南
-
-1. 在修改文件前，先使用 `read_file` 了解当前内容
-2. 对于复杂任务，可以使用 `spawn_agent` 并行处理
-3. 执行命令时注意安全性，避免危险操作
-4. 使用 `update_file` 进行精确的内容替换，避免覆盖整个文件
-"""
+def _load_builtin_prompt() -> str:
+    """加载内置系统提示词"""
+    if BUILTIN_PROMPT_FILE.exists():
+        return BUILTIN_PROMPT_FILE.read_text(encoding="utf-8")
+    return "你是一个代码助手，帮助用户完成编程任务。"
 
 
 def ensure_config_dir() -> None:
@@ -60,9 +39,9 @@ def ensure_config_dir() -> None:
         default_config = Config()
         save_config(default_config)
 
-    # 创建默认 AGENTS.md
+    # 创建默认 AGENTS.md（从内置提示词复制）
     if not AGENTS_FILE.exists():
-        AGENTS_FILE.write_text(DEFAULT_SYSTEM_PROMPT, encoding="utf-8")
+        AGENTS_FILE.write_text(_load_builtin_prompt(), encoding="utf-8")
 
 
 def load_config() -> Config:
@@ -104,7 +83,7 @@ def load_agents_prompt() -> str:
     """
     加载系统提示词
 
-    从 ~/.minicc/AGENTS.md 读取，若不存在则返回默认提示词。
+    优先级：~/.minicc/AGENTS.md > 内置 prompts/system.md
 
     Returns:
         str: 系统提示词内容
@@ -114,7 +93,7 @@ def load_agents_prompt() -> str:
     if AGENTS_FILE.exists():
         return AGENTS_FILE.read_text(encoding="utf-8")
 
-    return DEFAULT_SYSTEM_PROMPT
+    return _load_builtin_prompt()
 
 
 def get_api_key(provider: Provider) -> str:

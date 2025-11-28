@@ -20,15 +20,19 @@
 
 ## 模块职责
 
-### schemas.py (128 行)
+### schemas.py (176 行)
 数据模型定义，所有 Pydantic 模型集中管理。
 
 **关键类:**
-- `Config`: 应用配置结构
+- `Config`: 应用配置结构（新增 PromptCache 支持）
+- `PromptCache`: Anthropic Prompt Cache 配置
 - `Provider`: LLM 提供商枚举
 - `ToolResult`: 工具执行结果
 - `DiffLine`: Diff 行信息
-- `MiniCCDeps`: Agent 依赖注入容器
+- `AgentTask`: SubAgent 任务定义（新增 description, subagent_type）
+- `TodoItem`: 任务列表项（新增）
+- `BackgroundShell`: 后台 Shell 进程信息（新增）
+- `MiniCCDeps`: Agent 依赖注入容器（新增 todos, background_shells, on_todo_update）
 
 ### config.py (155 行)
 配置文件管理，处理 ~/.minicc 目录。
@@ -39,14 +43,26 @@
 - `load_agents_prompt()`: 加载系统提示词
 - `get_api_key()`: 获取 API 密钥
 
-### tools.py (494 行)
-工具函数实现，定义所有可供 Agent 调用的工具。
+### tools.py (1162 行)
+工具函数实现，定义所有可供 Agent 调用的工具。使用高性能第三方库 (ripgrepy, wcmatch)，对标 Claude Code。
 
 **工具分类:**
-- 文件操作: read_file, write_file, update_file
-- 搜索: search_files, grep
-- 命令行: bash
-- 子任务: spawn_agent, get_agent_result
+- **文件操作**:
+  - `read_file` (offset/limit, cat -n 格式)
+  - `write_file` (创建/覆盖)
+  - `edit_file` (精确字符串替换，严格模式 + 空白容错)
+- **搜索**:
+  - `glob_files` (高级 glob 模式，替代 search_files)
+  - `grep_search` (ripgrepy 高性能，替代 grep)
+- **命令行**:
+  - `bash` (同步执行，新增 timeout/description/run_in_background 参数)
+  - `bash_output` (获取后台命令输出，新增)
+  - `kill_shell` (终止后台命令，新增)
+- **任务管理**:
+  - `task` (创建子任务，替代 spawn_agent)
+  - `todo_write` (任务追踪，新增)
+- **Notebook**:
+  - `notebook_edit` (Jupyter notebook 编辑，新增)
 
 ### agent.py (148 行)
 Agent 定义，使用 pydantic-ai 创建和配置。
@@ -83,15 +99,16 @@ BottomBar - 模型/目录/分支/Token
 Footer
 ```
 
-### ui/widgets.py (230 行)
+### ui/widgets.py (272 行)
 自定义 UI 组件集合，已精简为核心组件。
 
 **保留的组件:**
-- `MessagePanel` (行 15-41): 消息面板，支持 Markdown 渲染和角色区分
-- `ToolCallLine` (行 44-85): 工具调用单行显示 `🔧 tool_name (param) ✅/❌`
-- `SubAgentLine` (行 87-127): SubAgent 单行显示 `🤖 prompt_summary ⏳/🔄/✅/❌`
-- `DiffView` (行 129-189): Diff 显示，颜色区分添加/删除/上下文
-- `BottomBar` (行 191-230): 底边栏，分区块显示模型/目录/分支/Token
+- `MessagePanel`: 消息面板，支持 Markdown 渲染和角色区分
+- `ToolCallLine`: 工具调用单行显示 `🔧 tool_name (param) ✅/❌`
+- `SubAgentLine`: SubAgent 单行显示 `🤖 prompt_summary ⏳/🔄/✅/❌`
+- `DiffView`: Diff 显示，颜色区分添加/删除/上下文
+- `BottomBar`: 底边栏，分区块显示模型/目录/分支/Token
+- `TodoDisplay`: 任务列表显示（新增）
 
 **已移除的组件:**
 - `ToolCallPanel` → 被 `ToolCallLine` 替代（更简洁）

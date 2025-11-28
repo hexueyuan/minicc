@@ -99,23 +99,25 @@ def create_agent(config: Config) -> Agent[MiniCCDeps, str]:
         model_settings=model_settings,
     )
 
-    # 注册所有工具
+    # 注册所有工具（对标 Claude Code）
+
     # 文件操作
     agent.tool(tools.read_file)
     agent.tool(tools.write_file)
-    agent.tool(tools.update_file)
+    agent.tool(tools.edit_file)
 
-    # 搜索
-    agent.tool(tools.search_files)
-    agent.tool(tools.grep)
+    # 搜索（高性能实现）
+    agent.tool(tools.glob_files)
+    agent.tool(tools.grep_search)
 
-    # 命令行
+    # 命令行（支持后台执行）
     agent.tool(tools.bash)
+    agent.tool(tools.bash_output)
+    agent.tool(tools.kill_shell)
 
-    # SubAgent
-    agent.tool(tools.spawn_agent)
-    agent.tool(tools.get_agent_result)
-    agent.tool(tools.wait_sub_agents)
+    # 任务管理
+    agent.tool(tools.task)
+    agent.tool(tools.todo_write)
 
     return agent
 

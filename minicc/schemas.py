@@ -2,8 +2,10 @@
 MiniCC 数据模型定义
 
 所有 Pydantic 模型集中定义在此文件中，提供类型安全的数据结构。
+对标 Claude Code 工具系统设计。
 """
 
+from asyncio import Task as AsyncTask
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Literal, Optional
@@ -91,18 +93,58 @@ class AgentTask(BaseModel):
     """
     SubAgent 任务定义
 
-    用于追踪 spawn_agent 创建的子任务状态。
+    用于追踪 Task 工具创建的子任务状态。
 
     Attributes:
         task_id: 唯一任务标识
+        description: 3-5 词简短描述
         prompt: 任务描述/提示词
+        subagent_type: 代理类型
         status: 任务状态 - pending/running/completed/failed
         result: 任务结果（完成后填充）
     """
     task_id: str
+    description: str = ""
     prompt: str
+    subagent_type: str = "general-purpose"
     status: str = "pending"  # pending, running, completed, failed
     result: Optional[str] = None
+
+
+class TodoItem(BaseModel):
+    """
+    任务列表项
+
+    用于 TodoWrite 工具管理的任务追踪。
+
+    Attributes:
+        content: 任务描述（祈使句形式，如 "Run tests"）
+        status: 任务状态 - pending/in_progress/completed
+        active_form: 进行时描述（如 "Running tests"）
+    """
+    content: str
+    status: Literal["pending", "in_progress", "completed"]
+    active_form: str
+
+
+class BackgroundShell(BaseModel):
+    """
+    后台 Shell 进程信息
+
+    用于 Bash 工具的后台执行模式。
+
+    Attributes:
+        shell_id: 唯一标识
+        command: 执行的命令
+        description: 命令描述
+        output_buffer: 输出缓冲
+        is_running: 是否仍在运行
+    """
+    shell_id: str
+    command: str
+    description: str = ""
+    output_buffer: str = ""
+    is_running: bool = True
 
 
 # ============ Agent 依赖类型 ============
@@ -119,10 +161,16 @@ class MiniCCDeps:
         cwd: 当前工作目录
         sub_agents: 子任务追踪字典 {task_id: AgentTask}
         sub_agent_tasks: 子任务的 asyncio 任务句柄
+        todos: 任务列表（TodoWrite 工具管理）
+        background_shells: 后台 Shell 进程 {shell_id: (process, BackgroundShell)}
         on_tool_call: 工具调用回调（用于 UI 更新）
+        on_todo_update: 任务列表更新回调
     """
     config: Config
     cwd: str
     sub_agents: dict[str, AgentTask] = field(default_factory=dict)
-    sub_agent_tasks: dict[str, Any] = field(default_factory=dict)
+    sub_agent_tasks: dict[str, AsyncTask] = field(default_factory=dict)
+    todos: list[TodoItem] = field(default_factory=list)
+    background_shells: dict[str, tuple[Any, BackgroundShell]] = field(default_factory=dict)
     on_tool_call: Callable[[str, dict, Any], None] | None = None
+    on_todo_update: Callable[[list[TodoItem]], None] | None = None
