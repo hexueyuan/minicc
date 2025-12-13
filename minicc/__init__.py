@@ -24,7 +24,7 @@ MiniCC - 极简教学版 AI 编程助手
     系统提示词位于 ~/.minicc/AGENTS.md
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.3"
 __author__ = "MiniCC Contributors"
 
 from .agent import create_agent, run_agent

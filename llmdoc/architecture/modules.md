@@ -98,8 +98,11 @@ Agent 定义，使用 pydantic-ai 创建和配置。
 
 **关键函数:**
 - `create_model()`: 创建模型标识符
-- `create_agent()`: 创建并配置 Agent
-- `_build_tools()`: 注册工具到 Agent
+- `create_agent()`: 创建并配置 Agent（支持 `cwd`，启动时静态加载 MCP toolsets）
+
+**MCP 相关:**
+- MCP 配置加载由 `minicc/mcp_loader.py` 负责（惰性导入、缺依赖降级、避免 DynamicToolset 引发 anyio CancelScope 报错）
+- MCP 工具调用提示由 `minicc/mcp_ui_toolset.py` 负责（通过 `deps.on_tool_call` 接入 UI）
 
 ### app.py (262 行)
 Textual TUI 主应用，处理用户交互和消息流处理。

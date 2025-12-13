@@ -62,6 +62,15 @@ minicc/
 }
 ```
 
+可选 MCP 配置：
+
+- 项目级：`<project>/.minicc/mcp.json`
+- 全局：`~/.minicc/mcp.json`
+
+MiniCC 会自动加载 MCP servers，并把它们的工具注册给 Agent。
+
+如需启用 MCP（连接/启动 MCP servers），请安装可选依赖：`pip install "minicc[mcp]"`。
+
 ### Prompt Cache (Anthropic)
 
 按照 [pydantic-ai Anthropic 指南](https://ai.pydantic.dev/models/anthropic/#how-cache-points-are-allocated) 可以在配置里开启 prompt caching：

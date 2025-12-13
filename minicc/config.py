@@ -14,6 +14,11 @@ from .schemas import Config, Provider
 CONFIG_DIR = Path.home() / ".minicc"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 AGENTS_FILE = CONFIG_DIR / "AGENTS.md"
+MCP_CONFIG_FILE = CONFIG_DIR / "mcp.json"
+
+# 项目级 MCP 配置位置：<cwd>/.minicc/mcp.json
+PROJECT_CONFIG_DIRNAME = ".minicc"
+PROJECT_MCP_CONFIG_NAME = "mcp.json"
 
 # 内置系统提示词文件路径
 BUILTIN_PROMPT_FILE = Path(__file__).parent / "prompts" / "system.md"
@@ -133,3 +138,26 @@ def get_api_key(provider: Provider) -> str:
         f"未找到 {provider.value} 的 API 密钥。"
         f"请设置环境变量 {env_var} 或在 ~/.minicc/config.json 中配置 api_key"
     )
+
+
+def find_mcp_config(cwd: str | Path | None = None) -> Path | None:
+    """
+    查找 MCP 配置文件路径
+
+    优先级：
+    1. 工作目录下的 .minicc/mcp.json
+    2. 全局 ~/.minicc/mcp.json
+
+    Args:
+        cwd: 工作目录（默认使用 os.getcwd()）
+
+    Returns:
+        Path 或 None（未找到时）
+    """
+    base = Path(cwd) if cwd is not None else Path(os.getcwd())
+    project_path = base / PROJECT_CONFIG_DIRNAME / PROJECT_MCP_CONFIG_NAME
+    if project_path.exists():
+        return project_path
+    if MCP_CONFIG_FILE.exists():
+        return MCP_CONFIG_FILE
+    return None

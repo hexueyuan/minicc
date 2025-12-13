@@ -13,6 +13,12 @@
 
 ## 最近更新
 
+### MCP 载入与工具提示完善 (v0.2.3 - 2025-12-13)
+- **MCP 载入**: 改为启动时静态加载 toolsets（避免 DynamicToolset 引发 anyio CancelScope 跨 Task 报错）
+- **可选依赖**: 增加 `minicc[mcp]` 安装方式
+- **UI 提示**: MCP 工具调用也会显示 `🔧` 工具调用行
+- **调试**: 增加 `MINICC_DEBUG=1` 在 TUI 显示完整 traceback
+
 ### ask_user 工具新增 (v0.2.1 - 2025-12-01)
 - **新增工具**: `ask_user` - 向用户提问选择题
 - **功能特性**:

@@ -4,6 +4,7 @@ MiniCC Agent 定义
 使用 pydantic-ai 创建和配置 Agent，支持 Anthropic 和 OpenAI 后端。
 """
 
+from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
@@ -12,9 +13,10 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from .config import get_api_key, load_agents_prompt
-from .schemas import Config, MiniCCDeps, Provider
 from . import tools
+from .config import get_api_key, load_agents_prompt
+from .mcp_loader import load_mcp_toolsets
+from .schemas import Config, MiniCCDeps, Provider
 
 
 def create_model(config: Config) -> AnthropicModel | OpenAIModel | str:
@@ -75,7 +77,7 @@ def _build_model_settings(config: Config) -> dict[str, Any] | None:
     return settings or None
 
 
-def create_agent(config: Config) -> Agent[MiniCCDeps, str]:
+def create_agent(config: Config, cwd: str | Path | None = None) -> Agent[MiniCCDeps, str]:
     """
     创建并配置主 Agent
 
@@ -83,6 +85,7 @@ def create_agent(config: Config) -> Agent[MiniCCDeps, str]:
 
     Args:
         config: 应用配置
+        cwd: 工作目录（用于查找项目级 .minicc/mcp.json）
 
     Returns:
         配置好的 Agent 实例
@@ -91,12 +94,14 @@ def create_agent(config: Config) -> Agent[MiniCCDeps, str]:
     system_prompt = load_agents_prompt()
 
     model_settings = _build_model_settings(config)
+    mcp_toolsets = load_mcp_toolsets(cwd)
 
     agent: Agent[MiniCCDeps, str] = Agent(
         model=model,
         deps_type=MiniCCDeps,
         system_prompt=system_prompt,
         model_settings=model_settings,
+        toolsets=mcp_toolsets,
     )
 
     # 注册所有工具（对标 Claude Code）

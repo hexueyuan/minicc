@@ -1,6 +1,6 @@
 [project]
 name = "minicc"
-version = "0.2.2"
+version = "0.2.3"
 description = "Mini Claude Code - 极简教学版 AI 编程助手"
 readme = "README.md"
 license = "MIT"
@@ -28,6 +28,11 @@ dependencies = [
     # 高性能文件系统操作
     "agent-gear>=0.1.3",
 ]
+
+[project.optional-dependencies]
+# 可选：MCP（Model Context Protocol）支持
+# 不装也能运行；仅在启用 MCP servers 配置时才会尝试导入。
+mcp = ["mcp>=1.18.0"]
 
 [project.urls]
 Homepage = "https://github.com/TokenRollAI/miniCC"

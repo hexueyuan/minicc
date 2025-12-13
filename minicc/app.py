@@ -6,6 +6,7 @@ MiniCC TUI 应用主模块
 
 import os
 import subprocess
+import traceback
 from typing import Any
 
 from agent_gear import FileSystem
@@ -56,8 +57,8 @@ class MiniCCApp(App):
         """
         super().__init__()
         self.config = config or load_config()
-        self.agent = create_agent(self.config)
         cwd = os.getcwd()
+        self.agent = create_agent(self.config, cwd=cwd)
 
         # 初始化 Agent-Gear FileSystem（全局单例，启用文件监听）
         self._fs = FileSystem(cwd, auto_watch=True)
@@ -183,7 +184,11 @@ class MiniCCApp(App):
             self._append_message("⚠️ 操作已取消", role="system")
 
         except Exception as e:
-            self._append_message(f"❌ 错误: {e}", role="system")
+            if os.environ.get("MINICC_DEBUG"):
+                tb = traceback.format_exc()
+                self._append_message(f"❌ 错误: {e}\n\n```text\n{tb}\n```", role="system")
+            else:
+                self._append_message(f"❌ 错误: {e}", role="system")
 
         finally:
             self._is_processing = False

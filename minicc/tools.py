@@ -945,7 +945,7 @@ async def _run_sub_agent(deps: MiniCCDeps, task_obj: AgentTask) -> None:
     task_obj.status = "running"
 
     try:
-        sub_agent = create_agent(deps.config)
+        sub_agent = create_agent(deps.config, cwd=deps.cwd)
         result = await sub_agent.run(task_obj.prompt, deps=deps)
         task_obj.status = "completed"
         task_obj.result = getattr(result, "output", str(result))

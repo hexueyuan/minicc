@@ -1,0 +1,1 @@
+- 每当更新了minicc的版本之后, 例如修改pyproject.toml的version, 询问用户是否要提交到pypi上
