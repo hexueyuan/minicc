@@ -88,15 +88,18 @@ class AskUserPanel(Static, can_focus=True):
 
         custom_text = self.custom_inputs.get(self.current_question, "")
         if self.typing_mode:
-            text.append("Type: ", style="dim")
+            text.append("其他（自定义）：", style="dim")
             text.append(self.typing_buffer, style="bold cyan")
             text.append("█", style="bold cyan blink")
         elif custom_text:
-            text.append(f"Type: {custom_text}", style="bold green" if is_custom_active else "green")
+            text.append(
+                f"其他（自定义）：{custom_text}",
+                style="bold green" if is_custom_active else "green",
+            )
             if q.multi_select and is_custom_active:
                 text.append(" ✓", style="green")
         else:
-            text.append("Type something.", style="bold" if is_selected else "dim italic")
+            text.append("其他（自定义输入）", style="bold" if is_selected else "dim italic")
 
         text.append("\n\n")
 
@@ -110,7 +113,14 @@ class AskUserPanel(Static, can_focus=True):
         else:
             text.append("Enter 选择 · ←→ 切换问题 · ↑↓ 移动 · Esc 取消", style="dim")
 
-        return Panel(text, title="📝 请回答以下问题", border_style="cyan", padding=(0, 1))
+        border_style = "#f59e0b" if self.has_focus else "cyan"
+        return Panel(text, title="请回答以下问题", border_style=border_style, padding=(0, 1))
+
+    def on_focus(self) -> None:
+        self.refresh()
+
+    def on_blur(self) -> None:
+        self.refresh()
 
     def _is_answered(self, q_idx: int) -> bool:
         ans = self.answers.get(q_idx)
@@ -256,4 +266,3 @@ class AskUserPanel(Static, can_focus=True):
                 else:
                     answers_out[q.header] = self.custom_inputs.get(i, "")
         self.post_message(self.Submitted(self.request_id, answers_out))
-

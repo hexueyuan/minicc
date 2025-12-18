@@ -24,7 +24,7 @@ MiniCC - 极简教学版 AI 编程助手
     系统提示词位于 ~/.minicc/AGENTS.md
 """
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 __author__ = "MiniCC Contributors"
 
 # 仅对外暴露 TUI 入口

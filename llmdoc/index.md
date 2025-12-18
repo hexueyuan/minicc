@@ -19,6 +19,12 @@ v0.3.0 迁移说明：
 
 ## 最近更新
 
+### v0.3.2 (2025-12-18)
+- **ask_user 稳定性**：工具层改为强校验 + 友好报错（避免 `str has no attribute get`、空选项导致空面板）
+- **提示词约束**：系统提示词明确 `ask_user` 每题必须提供 `header/question/options`
+- **问答面板**：自定义项显示为“其他（自定义输入）”，减少误解
+- 相关：`minicc/tools/interact.py`、`minicc/prompts/system.md`、`minicc/tui/ask_user_panel.py`、`tests/test_ask_user_normalize.py`
+
 ### MCP 载入与工具提示完善 (v0.2.3 - 2025-12-13)
 - **MCP 载入**: 改为启动时静态加载 toolsets（避免 DynamicToolset 引发 anyio CancelScope 跨 Task 报错）
 - **可选依赖**: 增加 `minicc[mcp]` 安装方式

@@ -29,9 +29,9 @@ uv run pytest -q
 
 - `tests/test_event_bus.py`：事件总线顺序与迭代
 - `tests/test_ask_user_service.py`：ask_user 请求/取消语义
+- `tests/test_ask_user_normalize.py`：ask_user 入参校验/归一化（header/options 约束、重复 header 处理）
 - `tests/test_subagent_service.py`：子代理前台/后台执行与事件
 - `tests/test_wait_subagents_tool.py`：`task(wait=False)` + `wait_subagents()` 汇总等待
 - `tests/test_mcp_preload.py`：MCP 预加载缓存与严格模式
 - `tests/test_runtime_preload.py`：启动阶段预加载 toolsets 且子代理复用（不懒加载）
 - `tests/test_chat_input.py`：输入框 Enter 提交、Ctrl+J 换行、@ 面板拦截键
-

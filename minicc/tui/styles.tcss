@@ -74,8 +74,5 @@ FileMentionPanel {
 
 AskUserPanel {
     height: auto;
-}
-
-AskUserPanel:focus {
-    border: round #f59e0b;
+    width: 100%;
 }

@@ -134,6 +134,24 @@ v0.3.0 起不再使用 “tools 内部回调” 来显示工具调用；TUI 直�
 - `Enter` / `Tab`：插入路径到输入框
 - `Esc`：关闭候选
 
+## AskUserPanel（ask_user 问答面板）
+
+**文件:** `minicc/tui/ask_user_panel.py`
+
+提供 `ask_user` 工具的可交互问答面板，支持单选/多选，以及“自定义输入”。
+
+**交互:**
+- `←/→`：切换问题
+- `↑/↓`：移动选项
+- `Enter`：选择/取消选择；在“自定义输入”上按下进入输入模式，再按 `Enter` 确认
+- `S`：全部问题都已回答后提交
+- `Esc`：取消
+
+**注意:**
+- 建议把问题与选项完整放在 `ask_user` 的工具参数里：TUI 以工具参数渲染，不要只在聊天文本里列选项而把 `options` 留空。
+- 工具层会对入参做归一化（`minicc/tools/interact.py:_normalize_ask_user_questions`）：清理 `header` 空白、`question` 为空时回退为 `header`、重复 `header` 自动追加 `#n` 避免答案 key 覆盖。
+- 工具层会对入参做强校验（`minicc/tools/interact.py:_validate_and_normalize_ask_user_questions`）：`header` 为空或 `options` 为空会直接返回错误（避免出现空面板/难懂的异常）。
+
 ## 集成指南
 
 创建新组件步骤：

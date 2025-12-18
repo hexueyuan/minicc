@@ -61,7 +61,21 @@
 
 ## 用户交互
 
-- `ask_user(questions)`：需要用户选择或补充信息时使用；会弹出交互面板并等待提交/取消
+- `ask_user(questions)`：仅用于“选择题/多选题”式的澄清；会弹出交互面板并等待提交/取消。
+  - 每个问题**必须**提供：`header`（简短且唯一，用作答案 key）、`question`（给用户看的问题文本）、`options`（至少 1 个选项，推荐 2~6 个）。
+  - `options[].label` 要直接可选、尽量短；必要时用 `options[].description` 补充说明（避免把说明塞进 label）。
+  - 不要把问题/选项只写在聊天文本里却在工具参数里留空；以工具参数为准渲染 UI。
+  - 示例：
+    ```json
+    [
+      {
+        "header": "语言",
+        "question": "你主要用什么编程语言？",
+        "options": [{"label":"Python"},{"label":"TypeScript"},{"label":"Go"},{"label":"其他"}],
+        "multi_select": false
+      }
+    ]
+    ```
 
 # 推荐工作流示例
 
