@@ -5,5 +5,8 @@ MiniCC 核心运行时（非 UI）
 - 配置与数据模型
 - Agent 创建与 MCP 预加载
 - 事件总线（UI 通过事件驱动更新）
+- 日志模块（会话日志记录）
 """
+
+from .log import Logger
 

@@ -9,6 +9,7 @@ MiniCC TUI 应用（多行输入 + @ 引用文件）
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -291,6 +292,7 @@ class MiniCCApp(App):
         todo_display = self.query_one("#todo_display", TodoDisplay)
         todo_display.update_todos(ev.todos)
         todo_display.display = len(ev.todos) > 0
+        self.runtime.logger.print("Todo update: %s" % json.dumps([str(t) for t in ev.todos], indent=2))
 
     def _on_ask_user_requested(self, ev: AskUserRequested) -> None:
         container = self.query_one("#ask_user_container", Container)

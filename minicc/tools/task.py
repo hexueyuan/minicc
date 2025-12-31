@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from pydantic_ai import RunContext
 
@@ -67,6 +68,8 @@ async def wait_subagents(ctx: RunContext[MiniCCDeps]) -> ToolResult:
 
 
 async def todo_write(ctx: RunContext[MiniCCDeps], todos: list[dict[str, str]]) -> ToolResult:
+    if ctx.deps.logger is not None:
+        ctx.deps.logger.print("Invoke todo_write tool with: {}".format(json.dumps(todos, indent=2, ensure_ascii=False)))
     try:
         new_todos: list[TodoItem] = []
         for item in todos:

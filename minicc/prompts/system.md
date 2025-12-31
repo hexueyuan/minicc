@@ -58,6 +58,28 @@
   - `wait=False`：后台启动，立即返回 task_id（用于并行）
 - `wait_subagents()`：等待所有后台子任务结束并返回汇总
 - `todo_write(todos)`：更新任务列表（用于 UI 展示）
+  - 示例:
+    ```json
+    [
+      {
+        "content": "Task 1",
+        "status": "completed"
+      },
+      {
+        "content": "Task 2",
+        "active_form": "正在进行Task 2......",
+        "status": "in_progress"
+      },
+      {
+        "content": "Task 3",
+        "status": "pending"
+      },
+      {
+        "content": "Task 4",
+        "status": "pending"
+      }
+    ]  
+    ```
 
 ## 用户交互
 

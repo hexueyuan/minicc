@@ -67,7 +67,7 @@ class AgentTask(BaseModel):
 
 class TodoItem(BaseModel):
     content: str
-    status: Literal["pending", "in_progress", "completed"]
+    status: str # Literal["pending", "in_progress", "completed"]
     active_form: str
 
 
@@ -116,6 +116,7 @@ class MiniCCDeps:
     config: Config
     cwd: str
     fs: Any = None  # agent_gear.FileSystem 实例（可选）
+    logger: Any = None
     todos: list[TodoItem] = field(default_factory=list)
     background_shells: dict[str, tuple[Any, BackgroundShell]] = field(default_factory=dict)
     sub_agents: dict[str, AgentTask] = field(default_factory=dict)
