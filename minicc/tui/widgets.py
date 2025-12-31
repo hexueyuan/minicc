@@ -1,10 +1,13 @@
 """
 MiniCC TUI 组件
 
-说明：本版本将“工具调用状态更新”作为一等能力，ToolCallLine/SubAgentLine 支持状态刷新。
+说明：本版本将"工具调用状态更新"作为一等能力，ToolCallLine/SubAgentLine 支持状态刷新。
 """
 
 from __future__ import annotations
+
+import math
+import time
 
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -193,15 +196,99 @@ class BottomBar(Static):
 
 
 class TodoDisplay(Static):
+    """任务显示组件，支持进行中任务的平滑脉冲动画效果和自动滚动"""
+
     class Closed(Message):
         pass
 
+    # 动画配置
+    _ANIMATION_INTERVAL = 0.05  # 刷新间隔（秒）
+    _PULSE_PERIOD = 2.0  # 脉冲周期（秒）
+
     def __init__(self, todos: list[TodoItem] | None = None, **kwargs):
         self.todos: list[TodoItem] = todos or []
+        self._timer = None
+        self._last_in_progress_index: int | None = None
         super().__init__(**kwargs)
+        # 启动动画定时器
+        self._start_animation()
+
+    def _start_animation(self) -> None:
+        """启动动画定时器"""
+        self._timer = self.set_timer(self._ANIMATION_INTERVAL, self._on_timer)
+
+    def _on_timer(self) -> None:
+        """定时器回调，周期性刷新实现动画效果"""
+        self.refresh()
+        self._timer = self.set_timer(self._ANIMATION_INTERVAL, self._on_timer)
+
+    def _get_pulse_intensity(self) -> float:
+        """
+        计算当前脉冲强度 (0.0 ~ 1.0)
+
+        使用正弦波实现平滑的呼吸效果：
+        - 值在 0.3 ~ 1.0 之间循环
+        - 周期为 _PULSE_PERIOD 秒
+        """
+        phase = (time.time() % self._PULSE_PERIOD) / self._PULSE_PERIOD  # 0.0 ~ 1.0
+        # 正弦波：-1 ~ 1 -> 映射到 0.3 ~ 1.0
+        intensity = 0.65 + 0.35 * math.sin(2 * math.pi * phase)
+        return intensity
+
+    def _get_in_progress_style(self) -> str:
+        """
+        根据脉冲强度获取进行中任务的样式
+
+        返回不同层级的黄色样式以实现平滑过渡
+        """
+        intensity = self._get_pulse_intensity()
+
+        # 将 0.3 ~ 1.0 的强度映射到 5 个层级
+        if intensity > 0.85:
+            return "bold yellow"
+        elif intensity > 0.7:
+            return "yellow"
+        elif intensity > 0.55:
+            return "yellow dim"
+        elif intensity > 0.4:
+            return "yellow dim dim"
+        else:
+            return "dim yellow"
+
+    def _get_loading_dots(self) -> str:
+        """
+        获取动态省略号
+
+        返回 ".", "..", "..." 循环变化
+        每 500ms 变化一次
+        """
+        cycle = int(time.time() * 2) % 3  # 0, 1, 2 循环（每秒2次变化）
+        return "." * (cycle + 1)
+
+    def _find_in_progress_index(self) -> int | None:
+        """查找进行中任务的索引"""
+        for i, todo in enumerate(self.todos):
+            if todo.status == "in_progress":
+                return i
+        return None
+
+    def _scroll_to_in_progress(self) -> None:
+        """滚动到进行中的任务（使其居中）"""
+        in_progress_index = self._find_in_progress_index()
+        if in_progress_index is None:
+            return
+
+        # 如果进行中的任务位置发生变化，则滚动
+        if in_progress_index != self._last_in_progress_index:
+            self._last_in_progress_index = in_progress_index
+            # 尝试滚动到该任务（使其居中可见）
+            self.scroll_to_widget(self, animate=False)
 
     def update_todos(self, todos: list[TodoItem]) -> None:
         self.todos = todos
+        in_progress_index = self._find_in_progress_index()
+        if in_progress_index != self._last_in_progress_index:
+            self._last_in_progress_index = in_progress_index
         self.refresh()
 
     def is_all_completed(self) -> bool:
@@ -214,34 +301,32 @@ class TodoDisplay(Static):
             if event.x >= self.size.width - 6:
                 self.post_message(self.Closed())
 
+    def on_unmount(self) -> None:
+        """组件卸载时清理定时器"""
+        if self._timer is not None:
+            self._timer.stop()
+
     def render(self) -> Panel:
         if not self.todos:
             return Panel(Text("暂无任务", style="dim"), title="📋 任务", border_style="dim")
 
         text = Text()
-        pending = [t for t in self.todos if t.status in ("pending", "in_progress")]
-        completed = [t for t in self.todos if t.status == "completed"]
         total = len(self.todos)
-        done = len(completed)
+        done = sum(1 for t in self.todos if t.status == "completed")
 
-        if pending:
-            for todo in pending:
-                if todo.status == "in_progress":
-                    text.append("🔄 ", style="yellow")
-                    text.append(f"{todo.active_form}\n", style="yellow bold")
-                else:
-                    text.append("⏳ ", style="dim")
-                    text.append(f"{todo.content}\n", style="dim")
-
-        if completed:
-            if pending:
-                text.append("─" * 20 + "\n", style="dim")
-            text.append(f"✅ 已完成 {done} 项", style="green dim")
-            recent = completed[-3:] if len(completed) > 3 else completed
-            for todo in recent:
-                text.append(f"\n   ✓ {todo.content}", style="green dim")
-            if len(completed) > 3:
-                text.append(f"\n   ... 及其他 {len(completed) - 3} 项", style="dim")
+        # 统一列表视图，按原始顺序显示所有任务
+        for todo in self.todos:
+            if todo.status == "in_progress":
+                # 进行中：黄色脉冲 + 动态省略号
+                pulse_style = self._get_in_progress_style()
+                dots = self._get_loading_dots()
+                text.append(f"{todo.content}{dots}\n", style=pulse_style)
+            elif todo.status == "completed":
+                # 已完成：绿色
+                text.append(f"{todo.content}\n", style="green")
+            else:  # pending
+                # 未开始：灰色
+                text.append(f"{todo.content}\n", style="dim")
 
         all_done = done == total and total > 0
         title = "📋 任务 ✓ 全部完成 [×]" if all_done else f"📋 任务 [{done}/{total}]"

@@ -19,7 +19,7 @@ from typing import Any
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Footer, Header
 
 from pydantic_ai import AgentRunResultEvent
@@ -100,22 +100,33 @@ class MiniCCApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield VerticalScroll(id="chat_container")
-        yield TodoDisplay(id="todo_display")
-        yield Container(id="ask_user_container")
-        yield Container(id="mention_container")
-        yield ChatInput(
-            id="input",
-            placeholder="输入消息… Enter 发送，Ctrl+J 换行",
-            soft_wrap=True,
-            show_line_numbers=False,
-        )
-        yield BottomBar(
-            model=f"{self.runtime.config.provider.value}:{self.runtime.config.model}",
-            cwd=self.runtime.cwd,
-            git_branch=self._git_branch,
-            id="bottom_bar",
-        )
+
+        # 主布局：水平分栏
+        with Horizontal(id="main_layout"):
+            # 左侧：聊天区域
+            with VerticalScroll(id="chat_container"):
+                yield Container(id="ask_user_container")
+                yield Container(id="mention_container")
+
+            # 右侧：辅助栏（固定显示 TodoDisplay）
+            with Container(id="sidebar"):
+                yield TodoDisplay(id="todo_display")
+
+        # 底部输入区域（不放在分栏内）
+        with Container(id="bottom_container"):
+            yield ChatInput(
+                id="input",
+                placeholder="输入消息… Enter 发送，Ctrl+J 换行",
+                soft_wrap=True,
+                show_line_numbers=False,
+            )
+            yield BottomBar(
+                model=f"{self.runtime.config.provider.value}:{self.runtime.config.model}",
+                cwd=self.runtime.cwd,
+                git_branch=self._git_branch,
+                id="bottom_bar",
+            )
+
         yield Footer(id="footer")
 
     def on_mount(self) -> None:
@@ -123,7 +134,6 @@ class MiniCCApp(App):
         input_widget.focus()
         input_widget.set_mention_key_handler(self._handle_mention_key)
 
-        self.query_one("#todo_display", TodoDisplay).display = False
         self.query_one("#ask_user_container", Container).display = False
         self.query_one("#mention_container", Container).display = False
         self._show_welcome()
@@ -291,7 +301,6 @@ class MiniCCApp(App):
     def _on_todo_updated(self, ev: TodoUpdated) -> None:
         todo_display = self.query_one("#todo_display", TodoDisplay)
         todo_display.update_todos(ev.todos)
-        todo_display.display = len(ev.todos) > 0
         self.runtime.logger.print("Todo update: %s" % json.dumps([str(t) for t in ev.todos], indent=2))
 
     def _on_ask_user_requested(self, ev: AskUserRequested) -> None:

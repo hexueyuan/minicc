@@ -68,6 +68,18 @@ async def wait_subagents(ctx: RunContext[MiniCCDeps]) -> ToolResult:
 
 
 async def todo_write(ctx: RunContext[MiniCCDeps], todos: list[dict[str, str]]) -> ToolResult:
+    """写入/更新任务列表
+
+    Args:
+        ctx: RunContext[MiniCCDeps]
+        todos: task need todo, as dict list such as
+            [
+                {"content":"Task 1","status":"completed"},
+                {"content":"Task 2","active_form":"正在进行Task 2......","status":"in_progress"},
+                {"content":"Task 3","status":"pending"},
+                {"content":"Task 4","status":"pending"}
+            ]
+    """
     if ctx.deps.logger is not None:
         ctx.deps.logger.print("Invoke todo_write tool with: {}".format(json.dumps(todos, indent=2, ensure_ascii=False)))
     try:

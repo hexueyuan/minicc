@@ -1,4 +1,4 @@
-/* MiniCC TUI 样式定义 - 简洁布局 */
+/* MiniCC TUI 样式定义 - 左右分栏布局 */
 
 Screen {
     layout: vertical;
@@ -6,13 +6,37 @@ Screen {
     color: #e6edf3;
 }
 
-#chat_container {
+/* 主布局容器：水平分栏 */
+#main_layout {
     height: 1fr;
+    width: 100%;
+}
+
+/* 左侧聊天区域 */
+#chat_container {
+    width: 1fr;
+    height: 100%;
     border: round #8be9fd;
     padding: 1;
-    margin: 0 1;
+    margin: 0 0 0 1;
     background: #0b0d16;
     scrollbar-gutter: stable;
+}
+
+/* 右侧辅助栏 */
+#sidebar {
+    width: 40;
+    height: 100%;
+    margin: 0 1 0 0;
+    padding: 0;
+    background: #0d0f18;
+    border: round #6272a4;
+}
+
+/* TodoDisplay 填充侧边栏 */
+#todo_display {
+    width: 100%;
+    height: 100%;
 }
 
 MessagePanel {
@@ -28,9 +52,15 @@ ToolCallLine, SubAgentLine {
     padding: 0;
 }
 
+/* 底部输入区域容器 */
+#bottom_container {
+    height: auto;
+    margin: 0 1 0 1;
+}
+
 #input {
     height: 5;
-    margin: 1 1 0 1;
+    margin: 1 0 0 0;
     border: round #f59e0b;
     background: #111827;
 }
@@ -42,7 +72,7 @@ ToolCallLine, SubAgentLine {
 /* 底边栏样式 */
 #bottom_bar {
     height: 1;
-    margin: 0 1;
+    margin: 1 0 0 0;
     padding: 0 1;
     background: #1f2937;
     border: none;
@@ -59,13 +89,11 @@ Footer {
 /* ask_user 容器样式 */
 #ask_user_container {
     height: auto;
-    margin: 0 1 1 1;
 }
 
 /* @ 引用文件候选列表容器 */
 #mention_container {
     height: auto;
-    margin: 0 1 0 1;
 }
 
 FileMentionPanel {

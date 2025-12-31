@@ -71,7 +71,7 @@ def create_agent(
     if toolsets is None:
         toolsets = load_mcp_toolsets(cwd)
 
-    agent: Agent[MiniCCDeps, str] = Agent(
+    agent: Agent[MiniCCDeps|None, str] = Agent(
         model=model,
         deps_type=MiniCCDeps,
         system_prompt=system_prompt,
