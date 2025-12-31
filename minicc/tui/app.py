@@ -108,9 +108,10 @@ class MiniCCApp(App):
                 yield Container(id="ask_user_container")
                 yield Container(id="mention_container")
 
-            # 右侧：辅助栏（固定显示 TodoDisplay）
+            # 右侧：辅助栏（TodoDisplay + 工具调用）
             with Container(id="sidebar"):
                 yield TodoDisplay(id="todo_display")
+                yield VerticalScroll(id="tool_container")
 
         # 底部输入区域（不放在分栏内）
         with Container(id="bottom_container"):
@@ -218,6 +219,7 @@ class MiniCCApp(App):
                     part = event.part
                     args = None
                     try:
+                        self.runtime.deps.logger.print(f"part={part}, args={args}")
                         args = part.args_as_dict()
                     except Exception:
                         try:
@@ -263,6 +265,8 @@ class MiniCCApp(App):
         finally:
             self._is_processing = False
             self._scroll_chat_end()
+            # 完成所有进行中的任务
+            self._complete_all_pending_todos()
 
     @work(group="events")
     async def _consume_events(self) -> None:
@@ -281,22 +285,32 @@ class MiniCCApp(App):
                 self._on_subagent_updated(ev)
 
     def _on_tool_started(self, ev: ToolCallStarted) -> None:
+        # 屏蔽某些工具在 ToolCallLine 中展示
+        if ev.tool_name in ("todo_write",):
+            return
+        if self.runtime.logger:
+            self.runtime.logger.print(f"[UI] Tool started: {ev.tool_name} (id={ev.tool_call_id}), args={ev.args}")
         line = ToolCallLine(ev.tool_name, ev.args, status="running")
         self._tool_lines[ev.tool_call_id] = line
-        chat = self._chat_container()
-        chat.mount(line)
-        self._ensure_stream_panel_last()
-        self._scroll_chat_end()
+        tools = self._tool_container()
+        tools.mount(line)
+        self._scroll_tool_end()
 
     def _on_tool_finished(self, ev: ToolCallFinished) -> None:
+        # 如果工具被屏蔽了，也需要在这里跳过
+        if ev.tool_call_id not in self._tool_lines:
+            return
+        if self.runtime.logger:
+            self.runtime.logger.print(f"[UI] Tool finished: {ev.tool_name} (id={ev.tool_call_id}, ok={ev.ok}, error={ev.error})")
         line = self._tool_lines.get(ev.tool_call_id)
         if line is None:
+            if self.runtime.logger:
+                self.runtime.logger.print(f"[UI] WARNING: Tool line not found for {ev.tool_call_id}, creating new one")
             line = ToolCallLine(ev.tool_name, {}, status="running")
             self._tool_lines[ev.tool_call_id] = line
-            self._chat_container().mount(line)
+            self._tool_container().mount(line)
         line.update_status("completed" if ev.ok else "failed")
-        self._ensure_stream_panel_last()
-        self._scroll_chat_end()
+        self._scroll_tool_end()
 
     def _on_todo_updated(self, ev: TodoUpdated) -> None:
         todo_display = self.query_one("#todo_display", TodoDisplay)
@@ -368,6 +382,11 @@ class MiniCCApp(App):
         chat = self._chat_container()
         for child in list(chat.children):
             child.remove()
+
+        tools = self._tool_container()
+        for child in list(tools.children):
+            child.remove()
+
         self.messages = []
         self._tool_lines.clear()
         self._subagent_lines.clear()
@@ -381,7 +400,6 @@ class MiniCCApp(App):
 
         todo_display = self.query_one("#todo_display", TodoDisplay)
         todo_display.update_todos([])
-        todo_display.display = False
         self.runtime.deps.todos = []
         self._show_welcome()
 
@@ -396,6 +414,9 @@ class MiniCCApp(App):
     def _chat_container(self) -> VerticalScroll:
         return self.query_one("#chat_container", VerticalScroll)
 
+    def _tool_container(self) -> VerticalScroll:
+        return self.query_one("#tool_container", VerticalScroll)
+
     def _append_message(self, content: str, role: str = "assistant") -> MessagePanel:
         panel = MessagePanel(content, role=role)
         chat = self._chat_container()
@@ -406,6 +427,26 @@ class MiniCCApp(App):
     def _scroll_chat_end(self) -> None:
         chat = self._chat_container()
         chat.call_after_refresh(chat.scroll_end, animate=False)
+
+    def _scroll_tool_end(self) -> None:
+        tools = self._tool_container()
+        tools.call_after_refresh(tools.scroll_end, animate=False)
+
+    def _complete_all_pending_todos(self) -> None:
+        """完成所有进行中和待处理的任务"""
+        from minicc.core.models import TodoItem
+
+        todos = self.runtime.deps.todos or []
+        updated = False
+        for todo in todos:
+            if todo.status in ("pending", "in_progress"):
+                todo.status = "completed"
+                updated = True
+
+        if updated:
+            self.runtime.deps.todos = todos
+            todo_display = self.query_one("#todo_display", TodoDisplay)
+            todo_display.update_todos(todos)
 
     def _update_streaming_assistant(self, content: str) -> None:
         if self._streaming_assistant_panel is None:

@@ -19,6 +19,19 @@ async def bash(
     description: str | None = None,
     run_in_background: bool = False,
 ) -> ToolResult:
+    """Run bash command.
+
+    Args:
+        ctx: RunContext[MiniCCDeps]
+        command: a valid shell command, such as 'ls -al', 'pwd'
+        timeout: how long to wait for the command to complete, unit is milliseconds
+        description: optional command description
+        run_in_background: whether to run the command in background,
+    """
+    if ctx.deps.logger is not None:
+        ctx.deps.logger.print(f"Invoke bash tool with input: command={command}, timeout={timeout}, "
+                              f"description={description}, run_in_background={run_in_background}")
+
     timeout = min(max(timeout, 1000), 600000)
     timeout_sec = timeout / 1000
 
@@ -38,6 +51,8 @@ async def bash(
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_sec)
         except asyncio.TimeoutError:
             _kill_process_tree(process)
+            if ctx.deps.logger is not None:
+                ctx.deps.logger.print(f"Invoke bash tool timeout, timeout={timeout}.")
             return ToolResult(success=False, output="", error=f"命令执行超时（{timeout_sec:.1f}秒）")
 
         stdout_str = (stdout or b"").decode("utf-8", errors="replace")
@@ -51,9 +66,13 @@ async def bash(
 
         success = process.returncode == 0
         error = None if success else f"退出码: {process.returncode}"
+        if ctx.deps.logger is not None:
+            ctx.deps.logger.print(f"Invoke bash tool success with output: {output}")
         return ToolResult(success=success, output=output, error=error)
 
     except Exception as e:
+        if ctx.deps.logger is not None:
+            ctx.deps.logger.print(f"Invoke bash tool failed with error: {e}")
         return ToolResult(success=False, output="", error=str(e))
 
 

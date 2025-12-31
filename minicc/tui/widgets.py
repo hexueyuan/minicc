@@ -76,8 +76,9 @@ class ToolCallLine(Static):
         for key in key_params:
             if key in self.args:
                 value = str(self.args[key])
-                if len(value) > 40:
-                    value = value[:40] + "..."
+                # 截断参数值，确保状态图标可见
+                if len(value) > 25:
+                    value = value[:25] + "..."
                 return f"({value})"
         return ""
 
@@ -315,17 +316,20 @@ class TodoDisplay(Static):
         done = sum(1 for t in self.todos if t.status == "completed")
 
         # 统一列表视图，按原始顺序显示所有任务
-        for todo in self.todos:
+        for idx, todo in enumerate(self.todos, 1):
             if todo.status == "in_progress":
                 # 进行中：黄色脉冲 + 动态省略号
                 pulse_style = self._get_in_progress_style()
                 dots = self._get_loading_dots()
+                text.append(f"{idx}. ", style="dim")
                 text.append(f"{todo.content}{dots}\n", style=pulse_style)
             elif todo.status == "completed":
                 # 已完成：绿色
+                text.append(f"{idx}. ", style="dim")
                 text.append(f"{todo.content}\n", style="green")
             else:  # pending
                 # 未开始：灰色
+                text.append(f"{idx}. ", style="dim")
                 text.append(f"{todo.content}\n", style="dim")
 
         all_done = done == total and total > 0
