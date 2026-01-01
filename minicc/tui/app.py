@@ -105,16 +105,15 @@ class MiniCCApp(App):
         with Horizontal(id="main_layout"):
             # 左侧：聊天区域
             with VerticalScroll(id="chat_container"):
-                yield Container(id="ask_user_container")
                 yield Container(id="mention_container")
 
-            # 右侧：辅助栏（TodoDisplay + 工具调用）
-            with Container(id="sidebar"):
+            # 右侧：辅助栏（任务与工具合并显示）
+            with VerticalScroll(id="sidebar"):
                 yield TodoDisplay(id="todo_display")
-                yield VerticalScroll(id="tool_container")
 
         # 底部输入区域（不放在分栏内）
         with Container(id="bottom_container"):
+            yield Container(id="ask_user_container")
             yield ChatInput(
                 id="input",
                 placeholder="输入消息… Enter 发送，Ctrl+J 换行",
@@ -265,8 +264,6 @@ class MiniCCApp(App):
         finally:
             self._is_processing = False
             self._scroll_chat_end()
-            # 完成所有进行中的任务
-            self._complete_all_pending_todos()
 
     @work(group="events")
     async def _consume_events(self) -> None:
@@ -285,32 +282,28 @@ class MiniCCApp(App):
                 self._on_subagent_updated(ev)
 
     def _on_tool_started(self, ev: ToolCallStarted) -> None:
-        # 屏蔽某些工具在 ToolCallLine 中展示
+        # 屏蔽某些工具在显示
         if ev.tool_name in ("todo_write",):
             return
         if self.runtime.logger:
             self.runtime.logger.print(f"[UI] Tool started: {ev.tool_name} (id={ev.tool_call_id}), args={ev.args}")
-        line = ToolCallLine(ev.tool_name, ev.args, status="running")
-        self._tool_lines[ev.tool_call_id] = line
-        tools = self._tool_container()
-        tools.mount(line)
-        self._scroll_tool_end()
+        # 添加到任务工具显示
+        todo_display = self.query_one("#todo_display", TodoDisplay)
+        todo_display.add_tool_call(ev.tool_call_id, ev.tool_name, ev.args)
 
     def _on_tool_finished(self, ev: ToolCallFinished) -> None:
-        # 如果工具被屏蔽了，也需要在这里跳过
+        # 屏蔽的工具也需要在这里跳过
         if ev.tool_call_id not in self._tool_lines:
+            # 但仍需更新 TaskToolDisplay 中的状态
+            if ev.tool_name not in ("todo_write",):
+                todo_display = self.query_one("#todo_display", TodoDisplay)
+                todo_display.update_tool_call(ev.tool_call_id, "completed" if ev.ok else "failed")
             return
         if self.runtime.logger:
             self.runtime.logger.print(f"[UI] Tool finished: {ev.tool_name} (id={ev.tool_call_id}, ok={ev.ok}, error={ev.error})")
-        line = self._tool_lines.get(ev.tool_call_id)
-        if line is None:
-            if self.runtime.logger:
-                self.runtime.logger.print(f"[UI] WARNING: Tool line not found for {ev.tool_call_id}, creating new one")
-            line = ToolCallLine(ev.tool_name, {}, status="running")
-            self._tool_lines[ev.tool_call_id] = line
-            self._tool_container().mount(line)
-        line.update_status("completed" if ev.ok else "failed")
-        self._scroll_tool_end()
+        # 更新 TaskToolDisplay 中的状态
+        todo_display = self.query_one("#todo_display", TodoDisplay)
+        todo_display.update_tool_call(ev.tool_call_id, "completed" if ev.ok else "failed")
 
     def _on_todo_updated(self, ev: TodoUpdated) -> None:
         todo_display = self.query_one("#todo_display", TodoDisplay)
@@ -383,10 +376,6 @@ class MiniCCApp(App):
         for child in list(chat.children):
             child.remove()
 
-        tools = self._tool_container()
-        for child in list(tools.children):
-            child.remove()
-
         self.messages = []
         self._tool_lines.clear()
         self._subagent_lines.clear()
@@ -399,6 +388,7 @@ class MiniCCApp(App):
             pass
 
         todo_display = self.query_one("#todo_display", TodoDisplay)
+        todo_display.tasks_with_tools = []  # 清空任务和工具
         todo_display.update_todos([])
         self.runtime.deps.todos = []
         self._show_welcome()

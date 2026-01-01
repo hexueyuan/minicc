@@ -6,7 +6,7 @@ Screen {
     color: #e6edf3;
 }
 
-/* 主布局容器：水平分栏 */
+/* 主布局容器：水平分栏，占据剩余空间 */
 #main_layout {
     height: 1fr;
     width: 100%;
@@ -23,28 +23,27 @@ Screen {
     scrollbar-gutter: stable;
 }
 
-/* 右侧辅助栏 */
+/* 右侧辅助栏：任务与工具合并显示（可滚动，全屏高度） */
 #sidebar {
     width: 50;
     height: 100%;
     margin: 0 1 0 0;
     padding: 0;
     background: #0d0f18;
-}
-
-/* TodoDisplay 固定高度 */
-#todo_display {
-    height: 30%;
-    width: 100%;
-    padding: 0 1 0 1;
-}
-
-/* 工具调用容器：占用剩余空间 */
-#tool_container {
-    height: 1fr;
-    width: 100%;
-    padding: 0 1 1 1;
+    border: round #6272a4;
     scrollbar-gutter: stable;
+    overflow-y: scroll;
+}
+
+/* TodoDisplay 不限制高度，让内容自然撑开 */
+#todo_display {
+    width: 100%;
+    min-height: 100%;
+}
+
+/* Panel 不限制高度 */
+Panel {
+    height: auto;
 }
 
 MessagePanel {

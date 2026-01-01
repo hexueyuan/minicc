@@ -19,11 +19,11 @@ async def bash(
     description: str | None = None,
     run_in_background: bool = False,
 ) -> ToolResult:
-    """Run bash command.
+    """Use this tool to execute a concrete shell command. You MUST provide a non-empty `command` string.
 
     Args:
         ctx: RunContext[MiniCCDeps]
-        command: a valid shell command, such as 'ls -al', 'pwd'
+        command: a valid shell command, such as 'ls -al', 'pwd', should not be empty
         timeout: how long to wait for the command to complete, unit is milliseconds
         description: optional command description
         run_in_background: whether to run the command in background,
